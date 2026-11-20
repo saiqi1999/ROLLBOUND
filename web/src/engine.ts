@@ -1,11 +1,14 @@
 import {units, encounters, offer, royal, type Kind, type Offer} from './data.ts';
 export type Side = 0|1;
-export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean};
-export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]};
-export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
+export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean; roundAttackBonus?:number};
+export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true};
+export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
-export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
+export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
 const copy = <T>(x:T):T => structuredClone(x);
+export function currentAttack(unit:Unit){
+  return units[unit.kind].atk+unit.bonus+(unit.roundAttackBonus??0);
+}
 export function rng(s:{rng:number}) {
   s.rng=(Math.imul(1664525,s.rng)+1013904223)>>>0;
   return s.rng/4294967296;
@@ -30,8 +33,11 @@ export function buy(run:Run,index:number) {
 }
 export function startBattle(r:Run){
   if(r.phase!=='shop')return;
-  const us=[r.roster,encounters[r.stage].units].flatMap((team,side)=>team.map((k,i):Unit=>({id:side+'-'+i,kind:k,side:side as Side,hp:units[k].hp,shield:0,bonus:0,field:false})));
-  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,boards:[Array(9).fill(null),Array(9).fill(null)]};
+  const us=[r.roster,encounters[r.stage].units].flatMap((team,side)=>team.map((k,i):Unit=>{
+    const id=side+'-'+i;
+    return {id,kind:k,side:side as Side,hp:units[k].hp,shield:0,bonus:side===0?(r.attackGrowth?.[id]??0):0,field:false};
+  }));
+  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,lastingGrowth:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
@@ -75,7 +81,7 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   const arrivals=selected.filter(u=>!u.field);
   for(const u of arrivals)u.field=true;
   if(arrivals.length)record('召唤',arrivals.length+' 名单位首次登场。',arrivals.map(u=>u.id));
-  const protectedIds=new Set<string>(), multipliers=new Map<string,number>(),extraAttack=new Map<string,number>();
+  const protectedIds=new Set<string>(), multipliers=new Map<string,number>();
   for(const u of selected){
     const board=b.boards[u.side],index=board.indexOf(u.id);
     const near=board.flatMap((id,i)=>id&&adjacent(i,index)?[byId.get(id)!]:[]);
@@ -90,21 +96,29 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
     if(u.kind==='archer'||u.kind==='bone'){
       const partners=near.filter(n=>n.kind===(u.kind==='archer'?'guard':'orc'));
       if(partners.length){
-        if(u.kind==='archer')multipliers.set(u.id,2);else extraAttack.set(u.id,2);
-        if(!arrivals.includes(u))record('联动',label(u)+(u.kind==='archer'?'与卫士相邻，本次攻击翻倍。':'与兽人相邻，本轮攻击力+2。'),[u.id,...partners.map(n=>n.id)]);
+        const focus=[u.id,...partners.map(n=>n.id)];
+        if(u.kind==='archer'&&b.lastingGrowth){
+          u.bonus++;
+          record('联动',label(u)+'邻接木盾卫士，攻击力+1。',focus,
+            {action:'empower',source:u.id,target:u.id,value:'+1 攻',valueTargets:[u.id]});
+        }else{
+          if(u.kind==='archer')multipliers.set(u.id,2);
+          else u.roundAttackBonus=2;
+          if(!arrivals.includes(u))record('联动',label(u)+(u.kind==='archer'?'与卫士相邻，本次攻击翻倍。':'与兽人相邻，本轮攻击力+2。'),focus);
+        }
       }
     }
     if(u.kind==='medic'){
       const candidates=near.filter(n=>n.hp<units[n.kind].hp);
       if(candidates.length){
         const t=pick(candidates,b),amount=Math.min(3,units[t.kind].hp-t.hp);t.hp+=amount;
-        record('联动',label(u)+'为'+units[t.kind].name+'恢复'+amount+'点生命。',[u.id,t.id],{value:'+'+amount,valueTargets:[t.id]});
+        record('联动',label(u)+'为'+units[t.kind].name+'恢复'+amount+'点生命。',[u.id,t.id],{action:'heal',source:u.id,target:t.id,value:'+'+amount,valueTargets:[t.id]});
       }
     }
   }
   const hits=selected.filter(u=>!arrivals.includes(u)).map(u=>{
     const targets=b.units.filter(n=>n.side!==u.side&&n.field&&n.hp>0);
-    return {u,t:targets.length?pick(targets,b):undefined, damage:((units[u.kind].atk+u.bonus)*(multipliers.get(u.id)??1))+(extraAttack.get(u.id)??0)};
+    return {u,t:targets.length?pick(targets,b):undefined, damage:currentAttack(u)*(multipliers.get(u.id)??1)};
   });
   const dead=new Set<Unit>();
   for(const {u,t,damage} of hits){
@@ -129,10 +143,15 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
       u.bonus+=2*count;record('阵亡',label(u)+'汲取侍从之力，攻击力+'+2*count+'。',[u.id],{value:'+'+2*count+' 攻'});
     }
   }
+  for(const u of b.units)delete u.roundAttackBonus;
   return {next:b,events,outcome:outcome(b)};
 }
 export function commitRoll(r:Run,result:ReturnType<typeof step>){
   if(r.phase!=='battle'||!r.battle||r.battle.round+1!==result.next.round)return;
   r.history.push({...r.battle,order:'board'});r.battle=result.next;r.log.push(...result.events.map(e=>'第'+result.next.round+'摇 · '+e.text));
+  if(result.next.lastingGrowth){
+    // The roster only appends units, so ally IDs stay stable throughout the run.
+    r.attackGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.bonus>0).map(u=>[u.id,u.bonus]));
+  }
   if(result.outcome){r.results.push(result.outcome);r.phase='result';}
 }

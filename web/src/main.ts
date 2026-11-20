@@ -1,7 +1,7 @@
 import './style.css';
 import {ATTACK_MS, LINK_MS} from './timing.ts';
 import {units,encounters,type Kind} from './data.ts';
-import {newRun,buy,startBattle,advance,step,commitRoll,type Run,type Moment,type Battle} from './engine.ts';
+import {newRun,buy,startBattle,advance,step,commitRoll,currentAttack,type Run,type Moment,type Battle} from './engine.ts';
 import {scenery} from './landscape.ts';
 import type * as Arena from './arena.ts';
 const key='rollbound.trial.v1',base=import.meta.env.BASE_URL+'art/';
@@ -12,7 +12,10 @@ function read():Run{
     const saved:Run|null=JSON.parse(localStorage.getItem(key)??'null');
     if(saved?.version===1&&Array.isArray(saved.roster)&&saved.roster.every(k=>k in units)&&encounters[saved.stage]&&Array.isArray(saved.history)){
       // Continue the live battle under the current rules. Historical replay frames retain their rules.
-      if(saved.phase==='battle'&&saved.battle)delete saved.battle.hp;
+      if(saved.phase==='battle'&&saved.battle){
+        delete saved.battle.hp;
+        saved.battle.lastingGrowth=true;
+      }
       return saved;
     }
   }catch{}
@@ -35,9 +38,17 @@ function modal(title:string,html:string){
 document.querySelector('#close')!.addEventListener('click',()=>dialog.close());
 dialog.addEventListener('close',()=>{if(resumeAfterDialog&&paused&&run.phase==='battle')togglePause();resumeAfterDialog=false;});
 document.addEventListener('unit-info',((e:CustomEvent)=>{const v=e.detail;modal(v.name,'<p>'+units[v.kind as Kind].text+'</p><p>攻击 '+v.atk+'　生命 '+v.hp+'　护盾 '+v.shield+'</p>');}) as EventListener);
-const ruleText='<p>每局经过三间商店、三场战斗。至少赢两场即可通关。前两战结束后获得3金币。</p><p>每摇从存活池抽取最多九枚棋子，随机放入九宫格，格内棋子全部点亮。首次点亮召唤，再次点亮攻击。</p><p><b>相邻</b>包括横、竖和斜角。攻击随机锁定一个已召唤的敌方单位。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>阵亡棋子退出本场。进入下一战时，阵容与单位属性恢复。</p>';
-function team(kinds:Kind[]){
-  return counts(kinds).map(([k,n])=>'<button class="roster-unit" data-kind="'+k+'">'+art(k)+'<span>'+units[k].name+'</span><b>×'+n+'</b></button>').join('');
+const ruleText='<p>每局经过三间商店、三场战斗。至少赢两场即可通关。前两战结束后获得3金币。</p><p>每摇从存活池抽取最多九枚棋子，随机放入九宫格，格内棋子全部点亮。首次点亮召唤，再次点亮攻击。</p><p><b>相邻</b>包括横、竖和斜角。攻击随机锁定一个已召唤的敌方单位。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>阵亡棋子退出本场，下场恢复生命，清空护盾。弓手和暮王的攻击力成长会跟随各自的棋子，保留至本局结束。</p>';
+function team(kinds:Kind[],growth?:Run['attackGrowth']){
+  const groups=new Map<string,{kind:Kind;attack:number;count:number}>();
+  kinds.forEach((kind,index)=>{
+    const attack=units[kind].atk+(growth?.['0-'+index]??0);
+    const key=kind+':'+attack;
+    const group=groups.get(key);
+    if(group)group.count++;
+    else groups.set(key,{kind,attack,count:1});
+  });
+  return [...groups.values()].map(({kind,attack,count})=>'<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'">'+art(kind)+'<span>'+units[kind].name+'</span>'+(growth?' <span>⚔ '+attack+'</span>':'')+'<b>×'+count+'</b></button>').join('');
 }
 function landscape(k:Kind,ks:Kind[]){
   return '<div class="diorama"><canvas aria-hidden="true" data-scene="'+k+'"></canvas><div class="party">'+ks.map((n,i)=>art(n,i?'companion':'lead')).join('')+'</div></div>';
@@ -47,7 +58,7 @@ function shopView(){
   app.innerHTML=header()+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+' / 3</div><h1>'+['边境营地','灰骨营地','王庭营地'][run.stage]+'</h1><p>招募棋子，备战'+encounters[run.stage].name+'。</p></div><div class="purse">'+coin+'<strong>'+run.gold+'</strong><span>金币</span></div></div><div class="offers">'+run.offers.map((o,i)=>{
     const def=units[o.kinds[0]],s=selected===i;
     return '<button class="offer '+(s?'selected ':'')+(o.sold?'sold':'')+'" data-offer="'+i+'" aria-pressed="'+s+'">'+landscape(o.kinds[0],o.kinds)+'<div class="cardbody"><div class="cardhead"><h2>'+o.title+'</h2><span class="price">'+coin+o.price+'</span></div><div class="statline">⚔ '+def.atk+'　<span>'+heart+' '+def.hp+'</span>'+ (o.kinds.length>1?'　·　'+o.kinds.length+' 枚棋子':'')+'</div><p>'+def.text+'</p><div class="cardfoot"><span>'+(o.sold?'已招募':o.kinds.length>1?'成组招募':'单枚招募')+'</span><span>'+(s?'◆ 已选中':'◇ 选择')+'</span></div></div></button>';
-  }).join('')+'</div><div class="purchase"><div><small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span></div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已招募':remain<0?'还差 '+(-remain)+' 金币':'招募 · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster)+'</div></div><div><h3>下战对手 <small>'+encounters[run.stage].name+'</small></h3><div class="roster enemy">'+team(encounters[run.stage].units)+'</div></div></div><div class="depart"><span>'+ (run.stage<2?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
+  }).join('')+'</div><div class="purchase"><div><small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span></div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已招募':remain<0?'还差 '+(-remain)+' 金币':'招募 · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster,run.attackGrowth??{})+'</div></div><div><h3>下战对手 <small>'+encounters[run.stage].name+'</small></h3><div class="roster enemy">'+team(encounters[run.stage].units)+'</div></div></div><div class="depart"><span>'+ (run.stage<2?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
   for(const c of app.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(c,c.dataset.scene!);
 }
 function battleShell(){
@@ -69,7 +80,7 @@ function paint(){
       if(!u)return '<span class="cell empty">·</span>';
       const focused=e?.focus.includes(u.id);
       const effect=focused&&e?.phase==='联动'?'lit orbit ':focused&&e?.phase!=='攻击'?'lit ':'';
-      return '<button class="cell '+effect+(u.hp===0?'fallen':'')+'" data-kind="'+u.kind+'" aria-label="'+units[u.kind].name+'">'+art(u.kind)+'</button>';
+      return '<button class="cell '+effect+(u.hp===0?'fallen':'')+'" data-kind="'+u.kind+'" data-attack="'+currentAttack(u)+'" aria-label="'+units[u.kind].name+'">'+art(u.kind)+'</button>';
     }).join('')+'</div>';
   }
   document.querySelector('#round')!.textContent=(replay?'回看 · ':'')+'第 '+b.round+' 摇';
@@ -109,7 +120,7 @@ function render(){
 }
 app.addEventListener('click',event=>{
   const el=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!el||el.disabled)return;
-  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+'<p>攻击 '+units[k].atk+'　生命 '+units[k].hp+'</p><p>'+units[k].text+'</p>');return;}
+  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+units[k].hp+'</p><p>'+units[k].text+'</p>');return;}
   if(el.dataset.offer!==undefined){selected=Number(el.dataset.offer);shopView();return;}
   switch(el.dataset.act){
     case 'rules':modal('战斗规则',ruleText);break;

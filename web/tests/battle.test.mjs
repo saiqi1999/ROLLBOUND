@@ -37,13 +37,19 @@ test('both teams count dead pages and declared attacks complete',()=>{
   }
   assert.ok(found);
 });
-test('diagonal pair doubles exactly one attack; physician heals eligible neighbor',()=>{
+test('diagonal pair adds one attack; physician heals the eligible neighbor',()=>{
   const b=field(['guard','archer','medic'],['orc']);b.units[0].hp=8;
   for(let seed=0;seed<2000;seed++){
     b.rng=seed;const out=step(b),grid=out.next.boards[0],g=grid.indexOf('0-0'),a=grid.indexOf('0-1');
     if(Math.abs(g%3-a%3)!==1||Math.abs(Math.floor(g/3)-Math.floor(a/3))!==1||!adjacent(g,grid.indexOf('0-2')))continue;
-    const link=out.events.find(e=>e.text.includes('恢复'));assert.ok(link);assert.equal(link.state.units[0].hp,11);
-    assert.equal(out.events.find(e=>e.source==='0-1').value,'−6');return;
+    const heal=out.events.find(e=>e.action==='heal');
+    assert.equal(heal?.source,'0-2');
+    assert.equal(heal.target,'0-0');
+    assert.equal(heal.state.units[0].hp,11);
+    const growth=out.events.find(e=>e.action==='empower'&&e.source==='0-1');
+    assert.equal(growth?.target,'0-1');
+    assert.equal(out.events.find(e=>e.action==='attack'&&e.source==='0-1').value,'−4');
+    return;
   }
   assert.fail('missing diagonal sample');
 });
@@ -111,6 +117,7 @@ test('replays with hero health preserve their old victory and guard shield rules
 
   const oldBoard=field(['guard','archer'],['page']);
   oldBoard.hp=[15,15];
+  delete oldBoard.lastingGrowth;
   for(let seed=0;seed<100;seed++){
     oldBoard.rng=seed;
     const roll=step(oldBoard,'legacy');
@@ -120,4 +127,41 @@ test('replays with hero health preserve their old victory and guard shield rules
     return;
   }
   assert.fail('missing adjacent legacy guard sample');
+});
+
+test('growth follows individual allies across battles, including allies that fell',()=>{
+  const r=newRun(23);
+  assert.ok(buy(r,1));
+  startBattle(r);
+  const next=structuredClone(r.battle);
+  next.round=1;
+  next.units.find(u=>u.id==='0-1').bonus=2;
+  next.units.find(u=>u.id==='0-3').bonus=3;
+  const king=next.units.find(u=>u.kind==='king');
+  king.bonus=4;
+  king.hp=0;
+  commitRoll(r,{next,events:[],outcome:'胜利'});
+
+  const resumed=JSON.parse(JSON.stringify(r));
+  advance(resumed);
+  startBattle(resumed);
+  const foe=resumed.battle.units.filter(u=>u.side===1);
+  assert.ok(foe.every(u=>u.bonus===0));
+  assert.equal(resumed.battle.units.find(u=>u.id==='0-1').bonus,2);
+  assert.equal(resumed.battle.units.find(u=>u.id==='0-3').bonus,3);
+  const revived=resumed.battle.units.find(u=>u.id===king.id);
+  assert.equal(revived.bonus,4);
+  assert.equal(revived.hp,units.king.hp);
+});
+
+test('freshly summoned archer grows once when touching multiple guards',()=>{
+  const b=field(Array(8).fill('guard').concat('archer'),['orc']);
+  b.units.forEach(u=>u.field=false);
+  const {events,next}=step(b);
+  const gains=events.filter(e=>e.action==='empower');
+  assert.equal(gains.length,1);
+  assert.ok(gains[0].focus.length>=3);
+  assert.equal(gains[0].state.units.find(u=>u.kind==='archer').bonus,1);
+  assert.equal(next.units.find(u=>u.kind==='archer').bonus,1);
+  assert.equal(events.some(e=>e.action==='attack'),false);
 });

@@ -2,22 +2,32 @@ import Phaser from 'phaser';
 import {ATTACK_MS} from './timing.ts';
 import {flashHit} from './hit-flash.ts';
 import {units, type Kind} from './data.ts';
-import type {Battle,Moment,Unit} from './engine.ts';
+import {currentAttack, type Battle, type Moment, type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
+const actions:Record<Kind,string[]>=Object.fromEntries(
+  Object.keys(units).map(k=>[k,k==='medic'?['idle','attack','death','heal']:['idle','attack','death']])
+) as Record<Kind,string[]>;
+const spellEffects=['heal','empower'] as const;
+const SPELL_MS=400;
 let scene:Stage|undefined, game:Phaser.Game|undefined, observer:ResizeObserver|undefined, latest:{b:Battle,e:Moment|undefined,speed:number}|undefined;
 class Stage extends Phaser.Scene {
   ready=false;
   preload(){
     this.load.json('frames',base+'frames.json');
-    for(const kind of Object.keys(units))for(const move of ['idle','attack','death']){
+    for(const [kind,moves] of Object.entries(actions))for(const move of moves){
       this.load.spritesheet(kind+'-'+move,base+kind+'-'+move+'.png',{frameWidth:80,frameHeight:64});
     }
+    for(const fx of spellEffects)this.load.spritesheet('fx-'+fx,base+'fx-'+fx+'.png',{frameWidth:100,frameHeight:100});
   }
   create(){
     const frames=this.cache.json.get('frames');
-    for(const k of Object.keys(units))for(const move of ['idle','attack','death']){
+    for(const [k,moves] of Object.entries(actions))for(const move of moves){
       const key=k+'-'+move;
       this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames[k][move]-1}),frameRate:move==='idle'?7:16,repeat:move==='idle'?-1:0});
+    }
+    for(const fx of spellEffects){
+      const key='fx-'+fx;
+      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames.fx[fx]-1}),duration:SPELL_MS,repeat:0});
     }
     this.ready=true;this.scale.on('resize',()=>{if(latest)this.paint(latest.b,latest.e,latest.speed);});
     if(latest)this.paint(latest.b,latest.e,latest.speed);
@@ -46,23 +56,51 @@ class Stage extends Phaser.Scene {
     }
   }
   actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number,speed:number){
-    const active=e?.focus.includes(u.id), hit=e?.target===u.id;
+    const active=e?.focus.includes(u.id);
+    const action=e?.action;
+    const hit=action==='attack'&&e?.target===u.id;
+    const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const scale=Math.max(.8,Math.min(w/(count>6?170:130),h/(Math.ceil(count/(count>6?3:2))*44+20),3.6));
     const marked=active&&e?.action!=='attack';
     const color=marked?0xf0cf89:u.side?0xb48283:0x86b69b;
     this.add.ellipse(x,y+7,23*scale,5*scale,0x0c1413,.5).setStrokeStyle(marked?2:1,color,marked?1:.45);
-    const move=e?.action==='death'&&active?'death':e?.source===u.id?'attack':'idle';
+    let move='idle';
+    if(action==='death'&&active)move='death';
+    if(e?.source===u.id){
+      if(action==='attack')move='attack';
+      if(action==='heal')move='heal';
+    }
     const key=u.kind+'-'+move;
     const sprite=this.add.sprite(x,y+9,u.kind+'-idle').setOrigin(.5,54/64).setScale(scale).setFlipX(!!u.side);
-    if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    if(!reducedMotion){
       if(move==='attack')sprite.play({key,duration:ATTACK_MS/speed});
+      else if(move==='heal')sprite.play({key,duration:SPELL_MS/speed});
       else sprite.play(key);
     }
-    if(hit&&e?.action==='attack')flashHit(sprite,96/speed);
-    const len=Math.min(43,22*scale),ybar=y+14;
-    this.add.rectangle(x,ybar,len,4,0x17221e);
-    this.add.rectangle(x-len/2,ybar,len*u.hp/units[u.kind].hp,4,u.side?0xd28d87:0x9acda5).setOrigin(0,.5);
-    if(u.shield)this.add.rectangle(x-len/2,ybar+4,len*Math.min(1,u.shield/12),2,0x91bfdf).setOrigin(0,.5);
+    if(hit)flashHit(sprite,96/speed);
+    if(e?.target===u.id&&(action==='heal'||action==='empower')){
+      const fxKey='fx-'+action;
+      const fx=this.add.sprite(x,y+9,fxKey).setOrigin(.5,.60).setScale(scale);
+      if(reducedMotion)fx.setFrame(1);
+      else fx.play({key:fxKey,duration:SPELL_MS/speed}).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>fx.destroy());
+    }
+    const attack=currentAttack(u);
+    const badgeWidth=15+7*String(attack).length;
+    const spacing=.38*w/(count>6?3:2);
+    const len=Math.max(12,Math.min(43,22*scale,spacing-badgeWidth-4));
+    const ybar=y+14;
+    const left=x-(len+badgeWidth)/2;
+    this.add.rectangle(left,ybar,len,4,0x17221e).setOrigin(0,.5);
+    this.add.rectangle(left,ybar,len*u.hp/units[u.kind].hp,4,u.side?0xd28d87:0x9acda5).setOrigin(0,.5);
+    if(u.shield)this.add.rectangle(left,ybar+4,len*Math.min(1,u.shield/12),2,0x91bfdf).setOrigin(0,.5);
+    const bladeX=left+len+7;
+    const boosted=attack>units[u.kind].atk;
+    const icon=this.add.graphics({x:bladeX,y:ybar});
+    icon.lineStyle(2,boosted?0xffd27d:0xe1d6bc).lineBetween(-2,3,5,-4);
+    icon.lineStyle(1,0xe1d6bc).lineBetween(-3,0,1,4);
+    this.add.text(bladeX+8,ybar,String(attack),{
+      fontFamily:'sans-serif',fontSize:'12px',color:boosted?'#ffd27d':'#f3ecd9',stroke:'#24352b',strokeThickness:3
+    }).setOrigin(0,.5);
     if(active&&e?.value&&(e.valueTargets?e.valueTargets.includes(u.id):hit||e.phase!=='攻击')){
       this.add.text(x,y-18*scale,e.value,{fontFamily:'sans-serif',fontSize:'13px',color:'#fff4bd',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
     }
@@ -70,7 +108,7 @@ class Stage extends Phaser.Scene {
       this.add.text(x,y-18*scale,'+'+e.shieldGain+' 盾',{fontFamily:'sans-serif',fontSize:'13px',color:'#acd5f0',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
     }
     const name=units[u.kind as Kind].name;
-    sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,atk:units[u.kind].atk+u.bonus,shield:u.shield}})));
+    sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,atk:attack,shield:u.shield}})));
   }
 }
 export function mountArena(parent:HTMLElement){
