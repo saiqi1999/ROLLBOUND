@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
+import {ATTACK_MS} from './timing.ts';
 import {units, type Kind} from './data.ts';
 import type {Battle,Moment,Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
-let scene:Stage|undefined, game:Phaser.Game|undefined, observer:ResizeObserver|undefined, latest:{b:Battle,e?:Moment}|undefined;
+let scene:Stage|undefined, game:Phaser.Game|undefined, observer:ResizeObserver|undefined, latest:{b:Battle,e:Moment|undefined,speed:number}|undefined;
 class Stage extends Phaser.Scene {
   ready=false;
   preload(){
@@ -17,10 +18,10 @@ class Stage extends Phaser.Scene {
       const key=k+'-'+move;
       this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames[k][move]-1}),frameRate:move==='idle'?7:16,repeat:move==='idle'?-1:0});
     }
-    this.ready=true;this.scale.on('resize',()=>{if(latest)this.paint(latest.b,latest.e);});
-    if(latest)this.paint(latest.b,latest.e);
+    this.ready=true;this.scale.on('resize',()=>{if(latest)this.paint(latest.b,latest.e,latest.speed);});
+    if(latest)this.paint(latest.b,latest.e,latest.speed);
   }
-  paint(b:Battle,e?:Moment){
+  paint(b:Battle,e:Moment|undefined,speed:number){
     if(!this.ready)return;
     this.tweens.killAll();this.children.removeAll(true);
     const {width:w,height:h}=this.scale;
@@ -40,24 +41,28 @@ class Stage extends Phaser.Scene {
     }
     for(const u of heroes){
       const pos=positions.get(u.id)!;
-      this.actor(u,pos.x,pos.y,e,w,h,heroes.filter(x=>x.side===u.side).length);
+      this.actor(u,pos.x,pos.y,e,w,h,heroes.filter(x=>x.side===u.side).length,speed);
     }
   }
-  actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number){
+  actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number,speed:number){
     const active=e?.focus.includes(u.id), hit=e?.target===u.id;
     const scale=Math.max(.8,Math.min(w/(count>6?170:130),h/(Math.ceil(count/(count>6?3:2))*44+20),3.6));
-    const color=active?0xf0cf89:u.side?0xb48283:0x86b69b;
-    this.add.ellipse(x,y+7,23*scale,5*scale,0x0c1413,.5).setStrokeStyle(active?2:1,color,active?1:.45);
+    const marked=active&&e?.action!=='attack';
+    const color=marked?0xf0cf89:u.side?0xb48283:0x86b69b;
+    this.add.ellipse(x,y+7,23*scale,5*scale,0x0c1413,.5).setStrokeStyle(marked?2:1,color,marked?1:.45);
     const move=e?.action==='death'&&active?'death':e?.source===u.id?'attack':'idle';
     const key=u.kind+'-'+move;
     const sprite=this.add.sprite(x,y+9,u.kind+'-idle').setOrigin(.5,54/64).setScale(scale).setFlipX(!!u.side);
-    if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches)sprite.play(key);
+    if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+      if(move==='attack')sprite.play({key,duration:ATTACK_MS/speed});
+      else sprite.play(key);
+    }
     if(hit){sprite.setTint(0xffa9a4);this.time.delayedCall(150,()=>{if(sprite.active)sprite.clearTint();});}
     const len=Math.min(43,22*scale),ybar=y+14;
     this.add.rectangle(x,ybar,len,4,0x17221e);
     this.add.rectangle(x-len/2,ybar,len*u.hp/units[u.kind].hp,4,u.side?0xd28d87:0x9acda5).setOrigin(0,.5);
     if(u.shield)this.add.rectangle(x-len/2,ybar+4,len*Math.min(1,u.shield/12),2,0x91bfdf).setOrigin(0,.5);
-    if(active&&e?.value&&(hit||e.phase!=='攻击')){
+    if(active&&e?.value&&(e.valueTargets?e.valueTargets.includes(u.id):hit||e.phase!=='攻击')){
       this.add.text(x,y-18*scale,e.value,{fontFamily:'sans-serif',fontSize:'13px',color:'#fff4bd',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
     }
     const name=units[u.kind as Kind].name;
@@ -69,5 +74,5 @@ export function mountArena(parent:HTMLElement){
   game=new Phaser.Game({type:Phaser.CANVAS,parent,transparent:true,pixelArt:true,banner:false,audio:{noAudio:true},scene,scale:{width:parent.clientWidth,height:parent.clientHeight},fps:{target:30}});
   observer=new ResizeObserver(()=>{if(parent.clientWidth&&parent.clientHeight)game?.scale.resize(parent.clientWidth,parent.clientHeight);});observer.observe(parent);
 }
-export function paintArena(b:Battle,e?:Moment){latest={b,e};scene?.paint(b,e);}
+export function paintArena(b:Battle,e:Moment|undefined,speed:number){latest={b,e,speed};scene?.paint(b,e,speed);}
 export function closeArena(){observer?.disconnect();observer=undefined;game?.destroy(true);game=undefined;scene=undefined;latest=undefined;}

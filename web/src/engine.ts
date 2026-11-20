@@ -2,9 +2,9 @@ import {units, encounters, offer, royal, type Kind, type Offer} from './data.ts'
 export type Side = 0|1;
 export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean};
 export type Battle = {round:number; rng:number; hp:[number,number]; units:Unit[]; boards:(string|null)[][]};
-export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'; source?:string; target?:string; value?:string};
+export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'; source?:string; target?:string; value?:string; valueTargets?:string[]};
 export type Outcome = '胜利'|'落败'|'平局';
-export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:Battle[]};
+export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function rng(s:{rng:number}) {
   s.rng=(Math.imul(1664525,s.rng)+1013904223)>>>0;
@@ -47,7 +47,7 @@ export function outcome(b:Battle):Outcome|undefined {
   if(b.hp.every(h=>h>0))return exhausted||b.round>=100?'平局':undefined;
   return b.hp[0]===b.hp[1]?'平局':b.hp[0]>b.hp[1]?'胜利':'落败';
 }
-export function step(start:Battle) {
+export function step(start:Battle, order:'board'|'legacy'='board') {
   const b=copy(start),events:Moment[]=[];
   const byId=new Map(b.units.map(u=>[u.id,u]));
   const record=(phase:string,text:string,focus:string[]=[],extra:Partial<Moment>={})=>events.push({phase,text,focus,state:copy(b),...extra});
@@ -57,8 +57,10 @@ export function step(start:Battle) {
   for(const side of [0,1] as const){
     const living=b.units.filter(u=>u.hp>0&&u.side===side);
     const drawn=shuffle([...living],b).slice(0,9);
-    selected.push(...drawn);
     b.boards[side]=shuffle([...drawn.map(u=>u.id),...Array(9-drawn.length).fill(null)],b);
+    // Historical checkpoints use draw order so their original target rolls are reproducible.
+    const ordered=order==='legacy'?drawn:b.boards[side].flatMap(id=>id?[byId.get(id)!]:[]);
+    selected.push(...ordered);
   }
   record('停盘','双方轮盘停定，本轮所有棋子点亮。');
   const arrivals=selected.filter(u=>!u.field);
@@ -73,21 +75,21 @@ export function step(start:Battle) {
       if(archers.length){
         const targets=[u,...archers].filter(n=>!protectedIds.has(n.id));
         for(const t of targets){t.shield+=2;protectedIds.add(t.id);}
-        if(targets.length)record('联动',label(u)+'与弓手相邻，获得2点护盾。',[u.id,...archers.map(n=>n.id)],{value:'+2 盾'});
+        if(targets.length)record('联动',label(u)+'与弓手相邻，获得2点护盾。',[u.id,...archers.map(n=>n.id)],{value:'+2 盾',valueTargets:targets.map(t=>t.id)});
       }
     }
     if(u.kind==='archer'||u.kind==='bone'){
-      const partner=near.find(n=>n.kind===(u.kind==='archer'?'guard':'orc'));
-      if(partner){
+      const partners=near.filter(n=>n.kind===(u.kind==='archer'?'guard':'orc'));
+      if(partners.length){
         if(u.kind==='archer')multipliers.set(u.id,2);else extraAttack.set(u.id,2);
-        if(!arrivals.includes(u))record('联动',label(u)+(u.kind==='archer'?'与卫士相邻，本次攻击翻倍。':'与兽人相邻，本轮攻击力+2。'),[u.id,partner.id]);
+        if(!arrivals.includes(u))record('联动',label(u)+(u.kind==='archer'?'与卫士相邻，本次攻击翻倍。':'与兽人相邻，本轮攻击力+2。'),[u.id,...partners.map(n=>n.id)]);
       }
     }
     if(u.kind==='medic'){
       const candidates=near.filter(n=>n.hp<units[n.kind].hp);
       if(candidates.length){
         const t=pick(candidates,b),amount=Math.min(3,units[t.kind].hp-t.hp);t.hp+=amount;
-        record('联动',label(u)+'为'+units[t.kind].name+'恢复'+amount+'点生命。',[u.id,t.id],{value:'+'+amount});
+        record('联动',label(u)+'为'+units[t.kind].name+'恢复'+amount+'点生命。',[u.id,t.id],{value:'+'+amount,valueTargets:[t.id]});
       }
     }
   }
@@ -117,6 +119,6 @@ export function step(start:Battle) {
 }
 export function commitRoll(r:Run,result:ReturnType<typeof step>){
   if(r.phase!=='battle'||!r.battle||r.battle.round+1!==result.next.round)return;
-  r.history.push(r.battle);r.battle=result.next;r.log.push(...result.events.map(e=>'第'+result.next.round+'摇 · '+e.text));
+  r.history.push({...r.battle,order:'board'});r.battle=result.next;r.log.push(...result.events.map(e=>'第'+result.next.round+'摇 · '+e.text));
   if(result.outcome){r.results.push(result.outcome);r.phase='result';}
 }

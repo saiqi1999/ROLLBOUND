@@ -48,3 +48,29 @@ test('diagonal pair doubles exactly one attack; physician heals eligible neighbo
   }
   assert.fail('missing diagonal sample');
 });
+
+test('read each wheel by rows for links and hits; resolve every neighbor in one beat',()=>{
+  const b=field(['guard','guard','archer','archer','guard','archer','archer','archer','guard'],['orc','bone','bone','orc']);
+  for(let seed=0;seed<15;seed++){
+    b.rng=seed;
+    const {next,events}=step(b);
+    const order=next.boards.flat().filter(Boolean);
+    const links=events.filter(e=>e.phase==='联动');
+    const positions=links.map(e=>order.indexOf(e.focus[0]));
+    assert.deepEqual(positions,[...positions].sort((x,y)=>x-y));
+    assert.equal(new Set(positions).size,positions.length);
+    assert.deepEqual(events.filter(e=>e.action==='attack').map(e=>e.source),order);
+    const granted=new Set();
+    for(const e of links){
+      const source=b.units.find(u=>u.id===e.focus[0]);
+      const grid=next.boards[source.side];
+      const other={guard:'archer',archer:'guard',bone:'orc'}[source.kind];
+      const neighbors=grid.filter((id,i)=>id&&adjacent(i,grid.indexOf(source.id))&&b.units.find(u=>u.id===id).kind===other);
+      assert.deepEqual(e.focus,[source.id,...neighbors]);
+      if(source.kind==='guard'){
+        assert.deepEqual(e.valueTargets,e.focus.filter(id=>!granted.has(id)));
+        e.valueTargets.forEach(id=>granted.add(id));
+      }
+    }
+  }
+});

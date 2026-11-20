@@ -1,4 +1,5 @@
 import './style.css';
+import {ATTACK_MS, LINK_MS} from './timing.ts';
 import {units,encounters,type Kind} from './data.ts';
 import {newRun,buy,startBattle,advance,step,commitRoll,type Run,type Moment,type Battle} from './engine.ts';
 import {scenery} from './landscape.ts';
@@ -45,29 +46,35 @@ function shopView(){
 function battleShell(){
   const rev=++token;app.innerHTML=header()+'<section class="battle"><div class="battle-title"><div><small class="kicker">第 '+(run.stage+1)+' 战 / 3</small><h1>'+encounters[run.stage].name+'</h1></div><div class="round" id="round"></div></div><div class="commanders"><span id="hero0"></span><b>VS</b><span id="hero1"></span></div><div class="theatre"><div id="wheel0" class="wheel"></div><div class="arena-wrap"><canvas id="scenery"></canvas><div id="arena" aria-label="自动战斗场面"></div></div><div id="wheel1" class="wheel enemy"></div></div><aside class="feed" aria-live="polite"><b id="phase"></b><span id="message"></span></aside><div class="controls"><button data-act="pause" id="pause"></button><button data-act="step">单步</button><button data-act="speed" id="speed"></button><button data-act="log">战报</button><button data-act="skip">'+(replay?'结束回看':'快速结算')+'</button></div></section>';
   scenery(document.querySelector('#scenery')!,'guard');const host=document.querySelector<HTMLElement>('#arena')!;
-  void import('./arena.ts').then(a=>{if(token!==rev)return;arena=a;a.mountArena(host);a.paintArena(currentState(),currentEvent());});
+  void import('./arena.ts').then(a=>{if(token!==rev)return;arena=a;a.mountArena(host);a.paintArena(currentState(),currentEvent(),speed);});
   paint();
 }
 function currentEvent(){return pending&&index>0?pending.events[index-1]:undefined;}
 function currentState(){return currentEvent()?.state??run.battle!;}
 function paint(){
   const e=currentEvent(),b=currentState();
+  app.style.setProperty('--orbit-duration', LINK_MS/speed+'ms');
   for(const side of [0,1]){
     document.querySelector('#hero'+side)!.textContent=(side?'敌方英雄':'我方英雄')+'　♥ '+b.hp[side]+' / 15';
     const arr=b.boards[side],live=b.units.filter(u=>u.side===side&&u.hp>0).length;
     document.querySelector('#wheel'+side)!.innerHTML='<h3>'+(side?'敌方轮盘':'我方轮盘')+'<small>存活 '+live+'</small></h3><div class="grid">'+arr.map(id=>{
       const u=b.units.find(n=>n.id===id);
       if(!u)return '<span class="cell empty">·</span>';
-      return '<button class="cell '+(e?.focus.includes(u.id)?'lit ':'')+(u.hp===0?'fallen':'')+'" data-kind="'+u.kind+'" aria-label="'+units[u.kind].name+'">'+art(u.kind)+'</button>';
+      const focused=e?.focus.includes(u.id);
+      const effect=focused&&e?.phase==='联动'?'lit orbit ':focused&&e?.phase!=='攻击'?'lit ':'';
+      return '<button class="cell '+effect+(u.hp===0?'fallen':'')+'" data-kind="'+u.kind+'" aria-label="'+units[u.kind].name+'">'+art(u.kind)+'</button>';
     }).join('')+'</div>';
   }
   document.querySelector('#round')!.textContent=(replay?'回看 · ':'')+'第 '+b.round+' 摇';
   document.querySelector('#phase')!.textContent=e?.phase??'备战';document.querySelector('#message')!.textContent=e?.text??'双方列阵，准备摇盘。';
+  paintControls();
+  arena?.paintArena(b,e,speed);
+}
+function paintControls(){
   document.querySelector('#pause')!.textContent=paused?'继续':'暂停';document.querySelector('#speed')!.textContent=speed+'×';
-  arena?.paintArena(b,e);
 }
 function stopTimer(){window.clearTimeout(timer);}
-function schedule(){stopTimer();if(!paused)timer=window.setTimeout(tick,(currentEvent()?.phase==='攻击'?340:520)/speed);}
+function schedule(){stopTimer();if(!paused)timer=window.setTimeout(tick,(currentEvent()?.phase==='攻击'?ATTACK_MS:520)/speed);}
 function tick(){
   if(!replay&&run.phase!=='battle')return;
   if(!pending){pending=step(run.battle!);index=0;}
@@ -77,7 +84,7 @@ function tick(){
   if(run.phase==='result'){leaveBattle();render();return;}
   tick();
 }
-function togglePause(){paused=!paused;if(paused)stopTimer();else schedule();paint();}
+function togglePause(){paused=!paused;if(paused)stopTimer();else schedule();paintControls();}
 function leaveBattle(){stopTimer();token++;arena?.closeArena();arena=undefined;replay=false;pending=undefined;index=0;}
 function fastFinish(){
   if(replay){leaveBattle();render();return;}
@@ -103,7 +110,7 @@ app.addEventListener('click',event=>{
     case 'fight':startBattle(run);paused=false;save();render();break;
     case 'pause':togglePause();break;
     case 'step':paused=true;stopTimer();tick();break;
-    case 'speed':speed=speed===1?2:speed===2?4:1;paint();schedule();break;
+    case 'speed':speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
     case 'skip':fastFinish();break;
     case 'advance':advance(run);selected=1;save();render();break;
     case 'reset':run=newRun(getSeed());selected=1;save();render();break;
@@ -112,7 +119,7 @@ app.addEventListener('click',event=>{
       modal('战斗记录','<ol>'+lines.map(l=>'<li>'+l+'</li>').join('')+'</ol>'+(lines.length?'':'<p>第一摇即将开始。</p>'));break;
     }
     case 'replay':{
-      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);pending=step(run.history[round]);index=1;replay=true;paused=false;battleShell();schedule();break;
+      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);const checkpoint=run.history[round];pending=step(checkpoint,checkpoint.order??'legacy');index=1;replay=true;paused=false;battleShell();schedule();break;
     }
   }
 });
