@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import {ATTACK_MS} from './timing.ts';
+import {flashHit} from './hit-flash.ts';
 import {units, type Kind} from './data.ts';
 import type {Battle,Moment,Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
@@ -57,7 +58,7 @@ class Stage extends Phaser.Scene {
       if(move==='attack')sprite.play({key,duration:ATTACK_MS/speed});
       else sprite.play(key);
     }
-    if(hit){sprite.setTint(0xffa9a4);this.time.delayedCall(150,()=>{if(sprite.active)sprite.clearTint();});}
+    if(hit&&e?.action==='attack')flashHit(sprite,96/speed);
     const len=Math.min(43,22*scale),ybar=y+14;
     this.add.rectangle(x,ybar,len,4,0x17221e);
     this.add.rectangle(x-len/2,ybar,len*u.hp/units[u.kind].hp,4,u.side?0xd28d87:0x9acda5).setOrigin(0,.5);
