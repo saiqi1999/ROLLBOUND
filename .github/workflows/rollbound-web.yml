@@ -25,19 +25,34 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
+          name: playable-site
           path: web/dist
   deploy:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.publish.outputs.page_url }}
     steps:
-      - name: Publish
-        id: publish
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: published
+      - uses: actions/download-artifact@v4
+        with:
+          name: playable-site
+          path: built
+      - name: Publish static files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          touch built/.nojekyll
+          rsync -a --delete --exclude='.git/' built/ published/
+          git -C published add --all
+          if ! git -C published diff --cached --quiet; then
+            git -C published -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Publish web build for ${GITHUB_SHA}"
+            git -C published push origin HEAD:gh-pages
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds"
