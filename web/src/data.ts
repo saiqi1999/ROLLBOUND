@@ -1,5 +1,5 @@
 export const units = {
-  guard: { name:'木盾卫士', hp:12, atk:2, text:'与见习弓手相邻时，使自身和相邻的见习弓手获得2点护盾。' },
+  guard: { name:'木盾卫士', hp:12, atk:2, text:'攻击时，自身获得2点护盾。' },
   archer: { name:'见习弓手', hp:7, atk:3, text:'与木盾卫士相邻时，攻击造成双倍伤害。' },
   medic: { name:'战地医师', hp:8, atk:1, text:'为一个随机受伤的相邻友方单位恢复3点生命值。' },
   king: { name:'暮王', hp:12, atk:3, text:'本场战斗中，每有一个纸甲侍从死亡，获得+2攻击力。' },

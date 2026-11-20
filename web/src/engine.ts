@@ -1,8 +1,8 @@
 import {units, encounters, offer, royal, type Kind, type Offer} from './data.ts';
 export type Side = 0|1;
 export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean};
-export type Battle = {round:number; rng:number; hp:[number,number]; units:Unit[]; boards:(string|null)[][]};
-export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'; source?:string; target?:string; value?:string; valueTargets?:string[]};
+export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]};
+export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
 const copy = <T>(x:T):T => structuredClone(x);
@@ -31,7 +31,7 @@ export function buy(run:Run,index:number) {
 export function startBattle(r:Run){
   if(r.phase!=='shop')return;
   const us=[r.roster,encounters[r.stage].units].flatMap((team,side)=>team.map((k,i):Unit=>({id:side+'-'+i,kind:k,side:side as Side,hp:units[k].hp,shield:0,bonus:0,field:false})));
-  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,hp:[15,15],units:us,boards:[Array(9).fill(null),Array(9).fill(null)]};
+  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
@@ -43,9 +43,18 @@ export function adjacent(a:number,b:number) {
   return a>=0&&b>=0&&a!==b&&Math.max(Math.abs(a%3-b%3),Math.abs(Math.floor(a/3)-Math.floor(b/3)))===1;
 }
 export function outcome(b:Battle):Outcome|undefined {
-  const exhausted=b.units.every(u=>u.hp<=0);
-  if(b.hp.every(h=>h>0))return exhausted||b.round>=100?'平局':undefined;
-  return b.hp[0]===b.hp[1]?'平局':b.hp[0]>b.hp[1]?'胜利':'落败';
+  // Older replay checkpoints still carry hero HP and use their original victory rule.
+  if(b.hp){
+    const exhausted=b.units.every(u=>u.hp<=0);
+    if(b.hp.every(h=>h>0))return exhausted||b.round>=100?'平局':undefined;
+    return b.hp[0]===b.hp[1]?'平局':b.hp[0]>b.hp[1]?'胜利':'落败';
+  }
+  if(b.round<=1)return;
+  const alliesRemain=b.units.some(u=>u.side===0&&u.field&&u.hp>0);
+  const enemiesRemain=b.units.some(u=>u.side===1&&u.field&&u.hp>0);
+  if(!alliesRemain)return enemiesRemain?'落败':'平局';
+  if(!enemiesRemain)return '胜利';
+  if(b.round>=100)return '平局';
 }
 export function step(start:Battle, order:'board'|'legacy'='board') {
   const b=copy(start),events:Moment[]=[];
@@ -70,7 +79,7 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   for(const u of selected){
     const board=b.boards[u.side],index=board.indexOf(u.id);
     const near=board.flatMap((id,i)=>id&&adjacent(i,index)?[byId.get(id)!]:[]);
-    if(u.kind==='guard'){
+    if(b.hp&&u.kind==='guard'){
       const archers=near.filter(n=>n.kind==='archer');
       if(archers.length){
         const targets=[u,...archers].filter(n=>!protectedIds.has(n.id));
@@ -99,13 +108,18 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   });
   const dead=new Set<Unit>();
   for(const {u,t,damage} of hits){
+    // Attacks are declared before damage. A fallen unit can finish its declared hit,
+    // but only a living guard can gain a shield.
+    if(!t&&!b.hp)continue;
+    const shieldGain=!b.hp&&u.kind==='guard'&&u.hp>0?2:0;
+    u.shield+=shieldGain;
     const other=(1-u.side) as Side;
     if(t){
       const absorbed=Math.min(t.shield,damage);t.shield-=absorbed;t.hp=Math.max(0,t.hp-damage+absorbed);
       if(t.hp===0)dead.add(t);
-    }else b.hp[other]=Math.max(0,b.hp[other]-damage);
+    }else if(b.hp)b.hp[other]=Math.max(0,b.hp[other]-damage);
     const target=t?.id??'hero'+other;
-    record('攻击',label(u)+'攻击'+(t?units[t.kind].name:'敌对英雄')+'，造成'+damage+'点伤害。',[u.id,target],{action:'attack',source:u.id,target,value:'−'+damage});
+    record('攻击',label(u)+'攻击'+(t?units[t.kind].name:'敌对英雄')+'，造成'+damage+'点伤害'+(shieldGain?'，自身获得2点护盾。':'。'),[u.id,target],{action:'attack',source:u.id,target,value:'−'+damage,shieldGain});
   }
   if(dead.size){
     for(const u of dead)u.field=false;

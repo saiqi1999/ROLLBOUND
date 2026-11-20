@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,buy,startBattle,advance,step,commitRoll} from '../src/engine.ts';
+import {adjacent,newRun,buy,startBattle,advance,step,commitRoll,outcome} from '../src/engine.ts';
 import {units} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
@@ -11,7 +11,7 @@ test('three shops, three battles, one payment per offer; reproducible replay',()
   for(let seed=0;seed<24;seed++){
     const r=newRun(seed);assert.ok(buy(r,1));assert.equal(buy(r,1),false);assert.equal(r.roster.length,7);
     for(let i=0;i<3;i++){
-      assert.equal(r.stage,i);startBattle(r);assert.deepEqual(r.battle.hp,[15,15]);
+      assert.equal(r.stage,i);startBattle(r);assert.equal(r.battle.hp,undefined);
       const first=step(r.battle);assert.deepEqual(first,step(r.battle));assert.equal(first.events.some(e=>e.phase==='攻击'),false);
       for(let j=0;r.phase==='battle'&&j<101;j++)commitRoll(r,step(r.battle));
       assert.equal(r.phase,'result');advance(r);
@@ -25,18 +25,17 @@ test('eight neighbors, shuffled distinct instances, no dead entries',()=>{
   const b=field(Array(12).fill('guard'),['orc']);b.units[0].hp=0;
   const board=step(b).next.boards[0];assert.equal(new Set(board).size,9);assert.ok(!board.includes('0-0'));
 });
-test('both teams count dead pages; declared attacks complete, no hero spill',()=>{
+test('both teams count dead pages and declared attacks complete',()=>{
   const b=field(['king','page'],['king','page']);
   b.units.filter(u=>u.kind==='page').forEach(u=>u.hp=1);
   let found=false;
   for(let seed=0;seed<100&&!found;seed++){
     b.rng=seed;const out=step(b);
     if(out.next.units.filter(u=>u.kind==='page'&&u.hp===0).length!==2)continue;
-    assert.deepEqual(out.next.hp,[15,15]);assert.equal(out.events.filter(e=>e.phase==='攻击').length,4);
+    assert.equal(out.events.filter(e=>e.phase==='攻击').length,4);
     assert.ok(out.next.units.filter(u=>u.kind==='king').every(u=>u.bonus===4));found=true;
   }
   assert.ok(found);
-  const empty=field(['archer'],[]);assert.equal(step(empty).next.hp[1],12);
 });
 test('diagonal pair doubles exactly one attack; physician heals eligible neighbor',()=>{
   const b=field(['guard','archer','medic'],['orc']);b.units[0].hp=8;
@@ -60,17 +59,65 @@ test('read each wheel by rows for links and hits; resolve every neighbor in one 
     assert.deepEqual(positions,[...positions].sort((x,y)=>x-y));
     assert.equal(new Set(positions).size,positions.length);
     assert.deepEqual(events.filter(e=>e.action==='attack').map(e=>e.source),order);
-    const granted=new Set();
     for(const e of links){
       const source=b.units.find(u=>u.id===e.focus[0]);
       const grid=next.boards[source.side];
-      const other={guard:'archer',archer:'guard',bone:'orc'}[source.kind];
+      const other={archer:'guard',bone:'orc'}[source.kind];
       const neighbors=grid.filter((id,i)=>id&&adjacent(i,grid.indexOf(source.id))&&b.units.find(u=>u.id===id).kind===other);
       assert.deepEqual(e.focus,[source.id,...neighbors]);
-      if(source.kind==='guard'){
-        assert.deepEqual(e.valueTargets,e.focus.filter(id=>!granted.has(id)));
-        e.valueTargets.forEach(id=>granted.add(id));
-      }
     }
   }
+});
+
+test('only a cleared field from round two ends the battle; simultaneous clear draws',()=>{
+  const empty=field(['archer'],[]);
+  assert.equal(step(empty).outcome,undefined);
+  empty.round=1;
+  const result=step(empty);
+  assert.equal(result.outcome,'胜利');
+  assert.equal(result.events.some(e=>e.action==='attack'),false);
+
+  const b=field(['page'],['page']);
+  b.round=1;
+  b.units.forEach(u=>u.hp=1);
+  assert.equal(step(b).outcome,'平局');
+
+  const reserve=field(['page'],['page']);
+  reserve.round=2;
+  reserve.units[0].field=false;
+  assert.equal(outcome(reserve),'落败');
+});
+
+test('a guard gains two shield in its attack event, only for itself',()=>{
+  const b=field(['guard','archer'],['page']);
+  b.units.forEach(u=>u.field=false);
+  const first=step(b);
+  assert.ok(first.next.units.every(u=>u.shield===0));
+  assert.equal(first.events.some(e=>e.action==='attack'),false);
+
+  const second=step(first.next);
+  const hit=second.events.find(e=>e.source==='0-0');
+  assert.equal(hit?.shieldGain,2);
+  assert.equal(hit.state.units.find(u=>u.id==='0-0').shield,2);
+  assert.equal(hit.state.units.find(u=>u.id==='0-1').shield,0);
+  assert.equal(second.events.some(e=>e.phase==='联动'&&e.focus[0]==='0-0'),false);
+});
+
+test('replays with hero health preserve their old victory and guard shield rules',()=>{
+  const b=field(['archer'],[]);
+  b.hp=[15,3];
+  assert.equal(step(b,'legacy').next.hp[1],0);
+  assert.equal(step(b,'legacy').outcome,'胜利');
+
+  const oldBoard=field(['guard','archer'],['page']);
+  oldBoard.hp=[15,15];
+  for(let seed=0;seed<100;seed++){
+    oldBoard.rng=seed;
+    const roll=step(oldBoard,'legacy');
+    const shield=roll.events.find(e=>e.phase==='联动'&&e.focus.length===2&&e.focus[0]==='0-0');
+    if(!shield)continue;
+    assert.equal(shield.state.units[1].shield,2);
+    return;
+  }
+  assert.fail('missing adjacent legacy guard sample');
 });

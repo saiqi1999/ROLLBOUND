@@ -25,10 +25,10 @@ class Stage extends Phaser.Scene {
     if(!this.ready)return;
     this.tweens.killAll();this.children.removeAll(true);
     const {width:w,height:h}=this.scale;
-    const heroes=b.units.filter(u=>u.field||(e?.action==='death'&&e.focus.includes(u.id)));
+    const combatants=b.units.filter(u=>u.field||(e?.action==='death'&&e.focus.includes(u.id)));
     const positions=new Map<string,{x:number;y:number}>();
     for(const side of [0,1]){
-      const team=heroes.filter(u=>u.side===side);
+      const team=combatants.filter(u=>u.side===side);
       const cols=team.length>6?3:2,rows=Math.ceil(team.length/cols)||1;
       team.forEach((u,i)=>{
         const nx=.06+(.38/cols)*(i%cols+.5);
@@ -39,9 +39,9 @@ class Stage extends Phaser.Scene {
       const p=positions.get(e.focus[0]),g=this.add.graphics().lineStyle(2,0xeac879,.8);
       if(p)for(const id of e.focus.slice(1)){const q=positions.get(id);if(q)g.lineBetween(p.x,p.y,q.x,q.y);}
     }
-    for(const u of heroes){
+    for(const u of combatants){
       const pos=positions.get(u.id)!;
-      this.actor(u,pos.x,pos.y,e,w,h,heroes.filter(x=>x.side===u.side).length,speed);
+      this.actor(u,pos.x,pos.y,e,w,h,combatants.filter(x=>x.side===u.side).length,speed);
     }
   }
   actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number,speed:number){
@@ -64,6 +64,9 @@ class Stage extends Phaser.Scene {
     if(u.shield)this.add.rectangle(x-len/2,ybar+4,len*Math.min(1,u.shield/12),2,0x91bfdf).setOrigin(0,.5);
     if(active&&e?.value&&(e.valueTargets?e.valueTargets.includes(u.id):hit||e.phase!=='攻击')){
       this.add.text(x,y-18*scale,e.value,{fontFamily:'sans-serif',fontSize:'13px',color:'#fff4bd',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
+    }
+    if(e?.source===u.id&&e.shieldGain){
+      this.add.text(x,y-18*scale,'+'+e.shieldGain+' 盾',{fontFamily:'sans-serif',fontSize:'13px',color:'#acd5f0',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
     }
     const name=units[u.kind as Kind].name;
     sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,atk:units[u.kind].atk+u.bonus,shield:u.shield}})));
