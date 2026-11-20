@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import {ATTACK_MS} from './timing.ts';
 import {flashHit} from './hit-flash.ts';
 import {units, type Kind} from './data.ts';
-import {currentAttack, type Battle, type Moment, type Unit} from './engine.ts';
+import {currentAttack,maxHealth,type Battle,type Moment,type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
   Object.keys(units).map(k=>[k,k==='medic'?['idle','attack','death','heal']:['idle','attack','death']])
@@ -95,11 +95,11 @@ class Stage extends Phaser.Scene {
       this.add.text(x,y-18*scale,'+'+e.shieldGain+' 盾',{fontFamily:'sans-serif',fontSize:'13px',color:'#acd5f0',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
     }
     const name=units[u.kind as Kind].name;
-    sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,atk:attack,shield:u.shield}})));
+    sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,maxHp:maxHealth(u),atk:attack,shield:u.shield}})));
   }
   drawStats(unit:Unit,attack:number,x:number,y:number,spacing:number){
     const boosted=attack>units[unit.kind].atk;
-    const hpColor=unit.hp<units[unit.kind].hp?'#ff7077':'#ffffff';
+    const hpColor=unit.hp<maxHealth(unit)?'#ff7077':'#ffffff';
     const attackColor=boosted?'#ffd27d':'#f3ecd9';
     const textStyle={fontFamily:'monospace',fontSize:'12px',stroke:'#24352b',strokeThickness:2};
     const hp=this.add.text(0,0,String(unit.hp),{...textStyle,color:hpColor}).setOrigin(0,.5);

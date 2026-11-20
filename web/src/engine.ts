@@ -1,13 +1,17 @@
 import {units, encounters, offer, royal, type Kind, type Offer} from './data.ts';
 export type Side = 0|1;
-export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean; roundAttackBonus?:number};
-export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true};
-export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
+export const FIELD_LIMIT = 9;
+export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean; roundAttackBonus?:number; healthBonus?:number; corpseConsumed?:true};
+export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true; corpseRules?:true};
+export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'|'blocked'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
-export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
+export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function currentAttack(unit:Unit){
   return units[unit.kind].atk+unit.bonus+(unit.roundAttackBonus??0);
+}
+export function maxHealth(unit:Unit){
+  return units[unit.kind].hp+(unit.healthBonus??0);
 }
 export function rng(s:{rng:number}) {
   s.rng=(Math.imul(1664525,s.rng)+1013904223)>>>0;
@@ -35,9 +39,10 @@ export function startBattle(r:Run){
   if(r.phase!=='shop')return;
   const us=[r.roster,encounters[r.stage].units].flatMap((team,side)=>team.map((k,i):Unit=>{
     const id=side+'-'+i;
-    return {id,kind:k,side:side as Side,hp:units[k].hp,shield:0,bonus:side===0?(r.attackGrowth?.[id]??0):0,field:false};
+    const healthBonus=side===0?(r.healthGrowth?.[id]??0):0;
+    return {id,kind:k,side:side as Side,hp:units[k].hp+healthBonus,shield:0,bonus:side===0?(r.attackGrowth?.[id]??0):0,healthBonus,field:false};
   }));
-  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,lastingGrowth:true,immediateDeaths:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
+  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,lastingGrowth:true,immediateDeaths:true,corpseRules:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
@@ -70,21 +75,47 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   const selected:Unit[]=[];
   b.round++;
   for(const side of [0,1] as const){
-    const living=b.units.filter(u=>u.hp>0&&u.side===side);
-    const drawn=shuffle([...living],b).slice(0,9);
+    const pool=b.units.filter(u=>u.side===side&&(u.hp>0||(b.corpseRules&&!u.corpseConsumed)));
+    const drawn=shuffle(pool,b).slice(0,9);
     b.boards[side]=shuffle([...drawn.map(u=>u.id),...Array(9-drawn.length).fill(null)],b);
     // Historical checkpoints use draw order so their original target rolls are reproducible.
     const ordered=order==='legacy'?drawn:b.boards[side].flatMap(id=>id?[byId.get(id)!]:[]);
     selected.push(...ordered);
   }
   record('停盘','双方轮盘停定，本轮所有棋子点亮。');
-  const arrivals=selected.filter(u=>!u.field);
-  for(const u of arrivals)u.field=true;
-  if(arrivals.length)record('召唤',arrivals.length+' 名单位首次登场。',arrivals.map(u=>u.id));
+  const fieldCounts=[0,0];
+  for(const u of b.units)if(u.field&&u.hp>0)fieldCounts[u.side]++;
+  const arrivals=new Set<Unit>(),blocked:Unit[]=[],attackers:Unit[]=[];
+  for(const u of selected){
+    if(u.hp<=0)continue;
+    if(u.field){attackers.push(u);continue;}
+    if(b.corpseRules&&fieldCounts[u.side]>=FIELD_LIMIT){blocked.push(u);continue;}
+    u.field=true;
+    fieldCounts[u.side]++;
+    arrivals.add(u);
+  }
+  if(arrivals.size)record('召唤',arrivals.size+' 名单位登场。',[...arrivals].map(u=>u.id));
+  if(blocked.length)record('召唤','场上已满，'+blocked.map(label).join('、')+'未能登场。',blocked.map(u=>u.id),{action:'blocked'});
   const protectedIds=new Set<string>(), multipliers=new Map<string,number>();
   for(const u of selected){
+    if(!u.field||u.hp<=0)continue;
     const board=b.boards[u.side],index=board.indexOf(u.id);
-    const near=board.flatMap((id,i)=>id&&adjacent(i,index)?[byId.get(id)!]:[]);
+    const neighbors=board.flatMap((id,i)=>id&&adjacent(i,index)?[byId.get(id)!]:[]);
+    const near=neighbors.filter(n=>n.field&&n.hp>0);
+    if(b.corpseRules&&u.kind==='king'){
+      const corpses=neighbors.filter(n=>n.hp<=0&&!n.corpseConsumed);
+      if(corpses.length){
+        const gain=2*corpses.length;
+        u.bonus+=gain;
+        u.healthBonus=(u.healthBonus??0)+gain;
+        u.hp+=gain;
+        for(const corpse of corpses)corpse.corpseConsumed=true;
+        record('联动',label(u)+'吞噬'+corpses.length+'具相邻尸体，永久获得+'+gain+'攻击力和+'+gain+'生命值。',
+          [u.id,...corpses.map(n=>n.id)],{action:'empower',source:u.id,target:u.id,value:'+'+gain+' 攻 / ♥',valueTargets:[u.id]});
+        // Keep the death poses in the linkage snapshot, then clear the consumed slots.
+        for(const corpse of corpses)board[board.indexOf(corpse.id)]=null;
+      }
+    }
     if(b.hp&&u.kind==='guard'){
       const archers=near.filter(n=>n.kind==='archer');
       if(archers.length){
@@ -104,19 +135,18 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
         }else{
           if(u.kind==='archer')multipliers.set(u.id,2);
           else u.roundAttackBonus=2;
-          if(!arrivals.includes(u))record('联动',label(u)+(u.kind==='archer'?'与卫士相邻，本次攻击翻倍。':'与兽人相邻，本轮攻击力+2。'),focus);
+          if(!arrivals.has(u))record('联动',label(u)+(u.kind==='archer'?'与卫士相邻，本次攻击翻倍。':'与兽人相邻，本轮攻击力+2。'),focus);
         }
       }
     }
     if(u.kind==='medic'){
-      const candidates=near.filter(n=>n.field&&n.hp>0&&n.hp<units[n.kind].hp);
+      const candidates=near.filter(n=>n.hp<maxHealth(n));
       if(candidates.length){
-        const t=pick(candidates,b),amount=Math.min(3,units[t.kind].hp-t.hp);t.hp+=amount;
+        const t=pick(candidates,b),amount=Math.min(3,maxHealth(t)-t.hp);t.hp+=amount;
         record('联动',label(u)+'为'+units[t.kind].name+'恢复'+amount+'点生命。',[u.id,t.id],{action:'heal',source:u.id,target:t.id,value:'+'+amount,valueTargets:[t.id]});
       }
     }
   }
-  const attackers=selected.filter(u=>!arrivals.includes(u));
   const chooseTarget=(attacker:Unit)=>{
     const targets=b.units.filter(u=>u.side!==attacker.side&&u.field&&u.hp>0);
     return targets.length?pick(targets,b):undefined;
@@ -139,7 +169,8 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   const resolveDeaths=(dead:Unit[])=>{
     if(!dead.length)return;
     for(const u of dead)u.field=false;
-    record('阵亡',dead.map(label).join('、')+'退出本场。',dead.map(u=>u.id),{action:'death'});
+    record('阵亡',dead.map(label).join('、')+(b.corpseRules?'阵亡，尸体留在轮盘池中。':'退出本场。'),dead.map(u=>u.id),{action:'death'});
+    if(b.corpseRules)return;
     const count=dead.filter(u=>u.kind==='page').length;
     for(const u of b.units.filter(u=>u.kind==='king'&&u.field&&u.hp>0&&count)){
       u.bonus+=2*count;
@@ -174,6 +205,9 @@ export function commitRoll(r:Run,result:ReturnType<typeof step>){
   if(result.next.lastingGrowth){
     // The roster only appends units, so ally IDs stay stable throughout the run.
     r.attackGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.bonus>0).map(u=>[u.id,u.bonus]));
+  }
+  if(result.next.corpseRules){
+    r.healthGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.healthBonus).map(u=>[u.id,u.healthBonus!]));
   }
   if(result.outcome){r.results.push(result.outcome);r.phase='result';}
 }

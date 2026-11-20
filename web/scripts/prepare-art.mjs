@@ -22,6 +22,13 @@ for(const [id,name] of Object.entries(names)){
       PNG.bitblt(src,badge,30,26,40,36,0,0);
       await writeFile(path.join(dest,id+'.png'),PNG.sync.write(badge));
     }
+    if(move==='death'){
+      const badge=new PNG({width:40,height:36});
+      // The Necromancer dissolves. Use its last recognizable pose before only particles remain.
+      const pose=id==='king'?5:count-1;
+      PNG.bitblt(src,badge,pose*100+30,28,40,36,0,0);
+      await writeFile(path.join(dest,id+'-corpse.png'),PNG.sync.write(badge));
+    }
   }
 }
 const healFxPath=new URL('../../Assets/Game/Art/Magic(Projectile)/Priest_Heal_effect.png',import.meta.url);

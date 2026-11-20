@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,buy,startBattle,advance,step,commitRoll,outcome} from '../src/engine.ts';
+import {adjacent,newRun,buy,startBattle,advance,step,commitRoll,outcome,maxHealth} from '../src/engine.ts';
 import {units} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
@@ -19,15 +19,17 @@ test('three shops, three battles, one payment per offer; reproducible replay',()
     assert.equal(r.phase,'end');assert.equal(r.results.length,3);assert.equal(r.gold,6);
   }
 });
-test('eight neighbors, shuffled distinct instances, no dead entries',()=>{
+test('eight neighbors, shuffled distinct instances, former replays omit corpses',()=>{
   assert.equal([0,1,2,3,4,5,6,7,8].filter(i=>adjacent(4,i)).length,8);
   assert.equal(adjacent(2,3),false);assert.equal(adjacent(0,4),true);
   const b=field(Array(12).fill('guard'),['orc']);b.units[0].hp=0;
+  delete b.corpseRules;
   const board=step(b).next.boards[0];assert.equal(new Set(board).size,9);assert.ok(!board.includes('0-0'));
 });
 test('historical replays count dead pages and finish declared attacks',()=>{
   const b=field(['king','page'],['king','page']);
   delete b.immediateDeaths;
+  delete b.corpseRules;
   b.units.filter(u=>u.kind==='page').forEach(u=>u.hp=1);
   let found=false;
   for(let seed=0;seed<100&&!found;seed++){
@@ -116,6 +118,7 @@ test('replays with hero health preserve their old victory and guard shield rules
   const b=field(['archer'],[]);
   b.hp=[15,3];
   delete b.immediateDeaths;
+  delete b.corpseRules;
   assert.equal(step(b,'legacy').next.hp[1],0);
   assert.equal(step(b,'legacy').outcome,'胜利');
 
@@ -123,6 +126,7 @@ test('replays with hero health preserve their old victory and guard shield rules
   oldBoard.hp=[15,15];
   delete oldBoard.lastingGrowth;
   delete oldBoard.immediateDeaths;
+  delete oldBoard.corpseRules;
   for(let seed=0;seed<100;seed++){
     oldBoard.rng=seed;
     const roll=step(oldBoard,'legacy');
@@ -144,6 +148,7 @@ test('growth follows individual allies across battles, including allies that fel
   next.units.find(u=>u.id==='0-3').bonus=3;
   const king=next.units.find(u=>u.kind==='king');
   king.bonus=4;
+  king.healthBonus=4;
   king.hp=0;
   commitRoll(r,{next,events:[],outcome:'胜利'});
 
@@ -156,7 +161,8 @@ test('growth follows individual allies across battles, including allies that fel
   assert.equal(resumed.battle.units.find(u=>u.id==='0-3').bonus,3);
   const revived=resumed.battle.units.find(u=>u.id===king.id);
   assert.equal(revived.bonus,4);
-  assert.equal(revived.hp,units.king.hp);
+  assert.equal(revived.hp,units.king.hp+4);
+  assert.equal(maxHealth(revived),revived.hp);
 });
 
 test('freshly summoned archer grows once when touching multiple guards',()=>{
@@ -188,7 +194,7 @@ test('a lethal hit immediately removes the target before another attack is chose
   assert.equal(roll.outcome,'胜利');
 });
 
-test('a dead ally remains ineligible for healing on the next roll',()=>{
+test('a corpse occupies a slot without summoning, attacking or receiving healing',()=>{
   const b=field(['medic','page'],['orc']);
   const dead=b.units.find(u=>u.kind==='page');
   dead.hp=0;
@@ -196,7 +202,64 @@ test('a dead ally remains ineligible for healing on the next roll',()=>{
   for(let seed=0;seed<20;seed++){
     b.rng=seed;
     const roll=step(b);
+    assert.ok(roll.next.boards[0].includes(dead.id));
+    assert.ok(roll.events.every(e=>e.source!==dead.id&&e.target!==dead.id));
+    assert.equal(roll.events.some(e=>e.phase==='召唤'&&e.focus.includes(dead.id)),false);
     assert.equal(roll.events.some(e=>e.action==='heal'&&e.target===dead.id),false);
     assert.equal(roll.next.units.find(u=>u.id===dead.id).hp,0);
   }
+});
+
+test('the tenth unit waits at a full field and can summon when a slot opens',()=>{
+  const b=field([...Array(9).fill('archer'),'guard'],['orc']);
+  const reserve=b.units[9];
+  reserve.field=false;
+  let blocked;
+  for(let seed=0;seed<100&&!blocked;seed++){
+    b.rng=seed;
+    blocked=step(b).events.find(e=>e.action==='blocked');
+  }
+  assert.deepEqual(blocked?.focus,[reserve.id]);
+  const full=step(b);
+  assert.equal(full.next.units[9].field,false);
+  assert.equal(full.events.some(e=>e.phase==='联动'||e.source===reserve.id),false);
+  assert.equal(blocked.state.units.filter(u=>u.side===0&&u.field).length,9);
+
+  b.units[0].hp=0;
+  b.units[0].field=false;
+  const roll=step(b);
+  assert.ok(roll.events.some(e=>e.phase==='召唤'&&e.action!=='blocked'&&e.focus.includes(reserve.id)));
+  assert.equal(roll.events.some(e=>e.action==='attack'&&e.source===reserve.id),false);
+});
+
+test('the first adjacent king consumes every shared corpse once and grows before attacking',()=>{
+  const b=field(['king','king','page','archer'],['orc']);
+  const corpseIds=['0-2','0-3'];
+  b.units.slice(2,4).forEach(u=>{u.hp=0;u.field=false;});
+  b.units.slice(0,2).forEach(u=>{u.hp=8;});
+  for(let seed=0;seed<100;seed++){
+    b.rng=seed;
+    const {next,events}=step(b);
+    const grid=events[0].state.boards[0];
+    const kings=grid.filter(id=>id==='0-0'||id==='0-1');
+    if(!kings.every(id=>corpseIds.every(corpse=>adjacent(grid.indexOf(id),grid.indexOf(corpse)))))continue;
+    const gains=events.filter(e=>e.action==='empower');
+    assert.equal(gains.length,1);
+    const gain=gains[0];
+    assert.equal(gain.source,kings[0]);
+    assert.deepEqual(gain.focus,[kings[0],...grid.filter(id=>corpseIds.includes(id))]);
+    const king=gain.state.units.find(u=>u.id===kings[0]);
+    assert.equal(king.bonus,4);
+    assert.equal(king.hp,12);
+    assert.equal(maxHealth(king),16);
+    assert.equal(events.find(e=>e.action==='attack'&&e.source===king.id).value,'−7');
+    for(const id of corpseIds){
+      assert.ok(gain.state.boards[0].includes(id));
+      assert.equal(next.units.find(u=>u.id===id).corpseConsumed,true);
+      assert.ok(!next.boards[0].includes(id));
+      assert.ok(!step(next).events[0].state.boards[0].includes(id));
+    }
+    return;
+  }
+  assert.fail('missing two kings with shared neighbors');
 });

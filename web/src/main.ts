@@ -1,7 +1,7 @@
 import './style.css';
-import {ATTACK_MS, LINK_MS} from './timing.ts';
+import {ATTACK_MS,WHEEL_MOTION} from './timing.ts';
 import {units,encounters,type Kind} from './data.ts';
-import {newRun,buy,startBattle,advance,step,commitRoll,currentAttack,type Run,type Moment,type Battle} from './engine.ts';
+import {newRun,buy,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Run} from './engine.ts';
 import {scenery} from './landscape.ts';
 import type * as Arena from './arena.ts';
 const key='rollbound.trial.v1',base=import.meta.env.BASE_URL+'art/';
@@ -16,6 +16,13 @@ function read():Run{
         delete saved.battle.hp;
         saved.battle.lastingGrowth=true;
         saved.battle.immediateDeaths=true;
+        if(!saved.battle.corpseRules){
+          for(const side of [0,1]){
+            const deployed=saved.battle.units.filter(u=>u.side===side&&u.field&&u.hp>0);
+            for(const u of deployed.slice(FIELD_LIMIT))u.field=false;
+          }
+          saved.battle.corpseRules=true;
+        }
       }
       return saved;
     }
@@ -25,7 +32,7 @@ function read():Run{
 let run=read(), selected=1, timer=0, paused=false, speed=1, index=0, pending:ReturnType<typeof step>|undefined;
 let arena:typeof Arena|undefined, token=0,replay=false,resumeAfterDialog=false,saveWarning=false;
 function save(){try{localStorage.setItem(key,JSON.stringify(run));}catch{saveWarning=true;}}
-const art=(k:Kind,cls='')=>'<img class="sprite '+cls+'" src="'+base+k+'.png" alt="">';
+const art=(k:Kind,cls='',corpse=false)=>'<img class="sprite '+cls+'" src="'+base+k+(corpse?'-corpse':'')+'.png" alt="">';
 const heart='♥', coin='<i class="coin" aria-hidden="true"></i>';
 const counts=(kinds:Kind[])=>Object.entries(kinds.reduce((a,k)=>(a[k]=(a[k]??0)+1,a),{} as Partial<Record<Kind,number>>)) as [Kind,number][];
 function header(){
@@ -38,18 +45,20 @@ function modal(title:string,html:string){
 }
 document.querySelector('#close')!.addEventListener('click',()=>dialog.close());
 dialog.addEventListener('close',()=>{if(resumeAfterDialog&&paused&&run.phase==='battle')togglePause();resumeAfterDialog=false;});
-document.addEventListener('unit-info',((e:CustomEvent)=>{const v=e.detail;modal(v.name,'<p>'+units[v.kind as Kind].text+'</p><p>攻击 '+v.atk+'　生命 '+v.hp+'　护盾 '+v.shield+'</p>');}) as EventListener);
-const ruleText='<p>每局经过三间商店、三场战斗。至少赢两场即可通关。前两战结束后获得3金币。</p><p>每摇从存活池抽取最多九枚棋子，随机放入九宫格，格内棋子全部点亮。首次点亮召唤，再次点亮攻击。</p><p><b>相邻</b>包括横、竖和斜角。每次攻击从当前在场的存活敌人中随机选择目标。单位生命降至0时立即阵亡，失去本轮尚未出手的攻击。治疗只作用于存活单位。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>阵亡棋子退出本场，下场恢复生命，清空护盾。弓手和暮王的攻击力成长会跟随各自的棋子，保留至本局结束。</p>';
-function team(kinds:Kind[],growth?:Run['attackGrowth']){
-  const groups=new Map<string,{kind:Kind;attack:number;count:number}>();
+document.addEventListener('unit-info',((e:CustomEvent)=>{const v=e.detail;modal(v.name,'<p>'+units[v.kind as Kind].text+'</p><p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护盾 '+v.shield+'</p>');}) as EventListener);
+const ruleText='<p>每局经过三间商店、三场战斗。至少赢两场即可通关。前两战结束后获得3金币。</p><p>每摇随机抽取最多九枚棋子放入九宫格。单位首次上场时召唤，后续摇到时攻击。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。每次攻击随机选择一个仍在场的存活敌人。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>下一战所有单位恢复至满血并清空护盾。弓手的攻击力成长和暮王的攻击、生命成长跟随各自的棋子，保留至本局结束。</p>';
+function team(kinds:Kind[],growth?:Pick<Run,'attackGrowth'|'healthGrowth'>){
+  const groups=new Map<string,{kind:Kind;attack:number;health:number;count:number}>();
   kinds.forEach((kind,index)=>{
-    const attack=units[kind].atk+(growth?.['0-'+index]??0);
-    const key=kind+':'+attack;
+    const id='0-'+index;
+    const attack=units[kind].atk+(growth?.attackGrowth?.[id]??0);
+    const health=units[kind].hp+(growth?.healthGrowth?.[id]??0);
+    const key=kind+':'+attack+':'+health;
     const group=groups.get(key);
     if(group)group.count++;
-    else groups.set(key,{kind,attack,count:1});
+    else groups.set(key,{kind,attack,health,count:1});
   });
-  return [...groups.values()].map(({kind,attack,count})=>'<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'">'+art(kind)+'<span>'+units[kind].name+'</span>'+(growth?' <span>⚔ '+attack+'</span>':'')+'<b>×'+count+'</b></button>').join('');
+  return [...groups.values()].map(({kind,attack,health,count})=>'<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+'">'+art(kind)+'<span>'+units[kind].name+'</span>'+(growth?' <span>⚔ '+attack+' '+heart+' '+health+'</span>':'')+'<b>×'+count+'</b></button>').join('');
 }
 function landscape(k:Kind,ks:Kind[]){
   return '<div class="diorama"><canvas aria-hidden="true" data-scene="'+k+'"></canvas><div class="party">'+ks.map((n,i)=>art(n,i?'companion':'lead')).join('')+'</div></div>';
@@ -59,7 +68,7 @@ function shopView(){
   app.innerHTML=header()+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+' / 3</div><h1>'+['边境营地','灰骨营地','王庭营地'][run.stage]+'</h1><p>招募棋子，备战'+encounters[run.stage].name+'。</p></div><div class="purse">'+coin+'<strong>'+run.gold+'</strong><span>金币</span></div></div><div class="offers">'+run.offers.map((o,i)=>{
     const def=units[o.kinds[0]],s=selected===i;
     return '<button class="offer '+(s?'selected ':'')+(o.sold?'sold':'')+'" data-offer="'+i+'" aria-pressed="'+s+'">'+landscape(o.kinds[0],o.kinds)+'<div class="cardbody"><div class="cardhead"><h2>'+o.title+'</h2><span class="price">'+coin+o.price+'</span></div><div class="statline">⚔ '+def.atk+'　<span>'+heart+' '+def.hp+'</span>'+ (o.kinds.length>1?'　·　'+o.kinds.length+' 枚棋子':'')+'</div><p>'+def.text+'</p><div class="cardfoot"><span>'+(o.sold?'已招募':o.kinds.length>1?'成组招募':'单枚招募')+'</span><span>'+(s?'◆ 已选中':'◇ 选择')+'</span></div></div></button>';
-  }).join('')+'</div><div class="purchase"><div><small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span></div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已招募':remain<0?'还差 '+(-remain)+' 金币':'招募 · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster,run.attackGrowth??{})+'</div></div><div><h3>下战对手 <small>'+encounters[run.stage].name+'</small></h3><div class="roster enemy">'+team(encounters[run.stage].units)+'</div></div></div><div class="depart"><span>'+ (run.stage<2?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
+  }).join('')+'</div><div class="purchase"><div><small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span></div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已招募':remain<0?'还差 '+(-remain)+' 金币':'招募 · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster,run)+'</div></div><div><h3>下战对手 <small>'+encounters[run.stage].name+'</small></h3><div class="roster enemy">'+team(encounters[run.stage].units)+'</div></div></div><div class="depart"><span>'+ (run.stage<2?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
   for(const c of app.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(c,c.dataset.scene!);
 }
 function battleShell(){
@@ -72,16 +81,20 @@ function currentEvent(){return pending&&index>0?pending.events[index-1]:undefine
 function currentState(){return currentEvent()?.state??run.battle!;}
 function paint(){
   const e=currentEvent(),b=currentState();
-  app.style.setProperty('--orbit-duration', LINK_MS/speed+'ms');
+  const motion=e?.action==='blocked'?'shake':e?.phase==='联动'?'orbit':undefined;
+  if(motion)app.style.setProperty('--wheel-duration',WHEEL_MOTION[motion]/speed+'ms');
   for(const side of [0,1]){
     const arr=b.boards[side],living=b.units.filter(u=>u.side===side&&u.hp>0),live=living.length;
-    document.querySelector('#team'+side)!.textContent=(side?'敌方':'我方')+'在场 '+living.filter(u=>u.field).length;
+    document.querySelector('#team'+side)!.textContent=(side?'敌方':'我方')+'在场 '+living.filter(u=>u.field).length+(b.corpseRules?'/'+FIELD_LIMIT:'');
     document.querySelector('#wheel'+side)!.innerHTML='<h3>'+(side?'敌方轮盘':'我方轮盘')+'<small>存活 '+live+'</small></h3><div class="grid">'+arr.map(id=>{
       const u=b.units.find(n=>n.id===id);
       if(!u)return '<span class="cell empty">·</span>';
       const focused=e?.focus.includes(u.id);
-      const effect=focused&&e?.phase==='联动'?'lit orbit ':focused&&e?.phase!=='攻击'?'lit ':'';
-      return '<button class="cell '+effect+(u.hp===0?'fallen':'')+'" data-kind="'+u.kind+'" data-attack="'+currentAttack(u)+'" aria-label="'+units[u.kind].name+'">'+art(u.kind)+'</button>';
+      const effect=focused&&motion?' data-motion="'+motion+'"':'';
+      const lit=focused&&e?.phase!=='攻击'&&motion!=='shake'?' lit':'';
+      const name=units[u.kind].name;
+      if(u.hp===0)return '<span class="cell fallen'+lit+'"'+effect+' role="img" aria-label="'+name+'的尸体">'+art(u.kind,'',true)+'</span>';
+      return '<button class="cell'+lit+'"'+effect+' data-kind="'+u.kind+'" data-attack="'+currentAttack(u)+'" data-health="'+maxHealth(u)+'" aria-label="'+name+'">'+art(u.kind)+'</button>';
     }).join('')+'</div>';
   }
   document.querySelector('#round')!.textContent=(replay?'回看 · ':'')+'第 '+b.round+' 摇';
@@ -121,7 +134,7 @@ function render(){
 }
 app.addEventListener('click',event=>{
   const el=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!el||el.disabled)return;
-  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+units[k].hp+'</p><p>'+units[k].text+'</p>');return;}
+  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+(Number(el.dataset.health)||units[k].hp)+'</p><p>'+units[k].text+'</p>');return;}
   if(el.dataset.offer!==undefined){selected=Number(el.dataset.offer);shopView();return;}
   switch(el.dataset.act){
     case 'rules':modal('战斗规则',ruleText);break;
