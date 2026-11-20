@@ -49,7 +49,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           touch built/.nojekyll
-          rsync -a --delete --exclude='.git/' built/ published/
+          rsync -a --checksum --delete --exclude='.git/' built/ published/
+          cmp built/index.html published/index.html
           git -C published add --all
           if ! git -C published diff --cached --quiet; then
             git -C published -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Publish web build for ${GITHUB_SHA}"
