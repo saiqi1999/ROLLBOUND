@@ -85,22 +85,7 @@ class Stage extends Phaser.Scene {
       else fx.play({key:fxKey,duration:SPELL_MS/speed}).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>fx.destroy());
     }
     const attack=currentAttack(u);
-    const badgeWidth=15+7*String(attack).length;
-    const spacing=.38*w/(count>6?3:2);
-    const len=Math.max(12,Math.min(43,22*scale,spacing-badgeWidth-4));
-    const ybar=y+14;
-    const left=x-(len+badgeWidth)/2;
-    this.add.rectangle(left,ybar,len,4,0x17221e).setOrigin(0,.5);
-    this.add.rectangle(left,ybar,len*u.hp/units[u.kind].hp,4,u.side?0xd28d87:0x9acda5).setOrigin(0,.5);
-    if(u.shield)this.add.rectangle(left,ybar+4,len*Math.min(1,u.shield/12),2,0x91bfdf).setOrigin(0,.5);
-    const bladeX=left+len+7;
-    const boosted=attack>units[u.kind].atk;
-    const icon=this.add.graphics({x:bladeX,y:ybar});
-    icon.lineStyle(2,boosted?0xffd27d:0xe1d6bc).lineBetween(-2,3,5,-4);
-    icon.lineStyle(1,0xe1d6bc).lineBetween(-3,0,1,4);
-    this.add.text(bladeX+8,ybar,String(attack),{
-      fontFamily:'sans-serif',fontSize:'12px',color:boosted?'#ffd27d':'#f3ecd9',stroke:'#24352b',strokeThickness:3
-    }).setOrigin(0,.5);
+    this.drawStats(u,attack,x,y+14,.38*w/(count>6?3:2));
     if(active&&e?.value&&(e.valueTargets?e.valueTargets.includes(u.id):hit||e.phase!=='攻击')){
       this.add.text(x,y-18*scale,e.value,{fontFamily:'sans-serif',fontSize:'13px',color:'#fff4bd',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
     }
@@ -110,6 +95,38 @@ class Stage extends Phaser.Scene {
     const name=units[u.kind as Kind].name;
     sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,atk:attack,shield:u.shield}})));
   }
+  drawStats(unit:Unit,attack:number,x:number,y:number,spacing:number){
+    const boosted=attack>units[unit.kind].atk;
+    const hpColor=unit.hp<units[unit.kind].hp?'#ff7077':'#ffffff';
+    const attackColor=boosted?'#ffd27d':'#f3ecd9';
+    const textStyle={fontFamily:'monospace',fontSize:'12px',stroke:'#24352b',strokeThickness:2};
+    const hp=this.add.text(0,0,String(unit.hp),{...textStyle,color:hpColor}).setOrigin(0,.5);
+    const atk=this.add.text(0,0,String(attack),{...textStyle,color:attackColor}).setOrigin(0,.5);
+
+    const hpWidth=11+hp.width;
+    const swordX=hpWidth+7;
+    const width=swordX+10+atk.width;
+    const left=-width/2;
+    hp.setX(left+11);
+    atk.setX(left+swordX+10);
+    const icons=this.add.graphics({x:left,y:0});
+    icons.fillStyle(0xe8a1a7);
+    icons.fillRect(1,-4,3,1);
+    icons.fillRect(5,-4,3,1);
+    icons.fillRect(0,-3,9,3);
+    icons.fillRect(1,0,7,1);
+    icons.fillRect(2,1,5,1);
+    icons.fillRect(3,2,3,1);
+    icons.fillRect(4,3,1,1);
+    icons.lineStyle(2,boosted?0xffd27d:0xe1d6bc).lineBetween(swordX-2,3,swordX+5,-4);
+    icons.lineStyle(1,0xe1d6bc).lineBetween(swordX-3,0,swordX+1,4);
+    if(unit.shield){
+      icons.fillStyle(0x91bfdf);
+      icons.fillRect(0,7,hpWidth*Math.min(1,unit.shield/12),2);
+    }
+    this.add.container(x,y,[icons,hp,atk]).setScale(Math.min(1,(spacing-3)/width));
+  }
+
 }
 export function mountArena(parent:HTMLElement){
   scene=new Stage();
