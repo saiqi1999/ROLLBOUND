@@ -15,6 +15,7 @@ function read():Run{
       if(saved.phase==='battle'&&saved.battle){
         delete saved.battle.hp;
         saved.battle.lastingGrowth=true;
+        saved.battle.immediateDeaths=true;
       }
       return saved;
     }
@@ -38,7 +39,7 @@ function modal(title:string,html:string){
 document.querySelector('#close')!.addEventListener('click',()=>dialog.close());
 dialog.addEventListener('close',()=>{if(resumeAfterDialog&&paused&&run.phase==='battle')togglePause();resumeAfterDialog=false;});
 document.addEventListener('unit-info',((e:CustomEvent)=>{const v=e.detail;modal(v.name,'<p>'+units[v.kind as Kind].text+'</p><p>攻击 '+v.atk+'　生命 '+v.hp+'　护盾 '+v.shield+'</p>');}) as EventListener);
-const ruleText='<p>每局经过三间商店、三场战斗。至少赢两场即可通关。前两战结束后获得3金币。</p><p>每摇从存活池抽取最多九枚棋子，随机放入九宫格，格内棋子全部点亮。首次点亮召唤，再次点亮攻击。</p><p><b>相邻</b>包括横、竖和斜角。攻击随机锁定一个已召唤的敌方单位。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>阵亡棋子退出本场，下场恢复生命，清空护盾。弓手和暮王的攻击力成长会跟随各自的棋子，保留至本局结束。</p>';
+const ruleText='<p>每局经过三间商店、三场战斗。至少赢两场即可通关。前两战结束后获得3金币。</p><p>每摇从存活池抽取最多九枚棋子，随机放入九宫格，格内棋子全部点亮。首次点亮召唤，再次点亮攻击。</p><p><b>相邻</b>包括横、竖和斜角。每次攻击从当前在场的存活敌人中随机选择目标。单位生命降至0时立即阵亡，失去本轮尚未出手的攻击。治疗只作用于存活单位。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>阵亡棋子退出本场，下场恢复生命，清空护盾。弓手和暮王的攻击力成长会跟随各自的棋子，保留至本局结束。</p>';
 function team(kinds:Kind[],growth?:Run['attackGrowth']){
   const groups=new Map<string,{kind:Kind;attack:number;count:number}>();
   kinds.forEach((kind,index)=>{

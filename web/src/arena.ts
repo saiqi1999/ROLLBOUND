@@ -36,7 +36,9 @@ class Stage extends Phaser.Scene {
     if(!this.ready)return;
     this.tweens.killAll();this.children.removeAll(true);
     const {width:w,height:h}=this.scale;
-    const combatants=b.units.filter(u=>u.field||(e?.action==='death'&&e.focus.includes(u.id)));
+    const combatants=b.units.filter(u=>u.field||
+      (e?.action==='attack'&&e.target===u.id)||
+      (e?.action==='death'&&e.focus.includes(u.id)));
     const positions=new Map<string,{x:number;y:number}>();
     for(const side of [0,1]){
       const team=combatants.filter(u=>u.side===side);

@@ -1,7 +1,7 @@
 import {units, encounters, offer, royal, type Kind, type Offer} from './data.ts';
 export type Side = 0|1;
 export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean; roundAttackBonus?:number};
-export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true};
+export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true};
 export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
@@ -37,7 +37,7 @@ export function startBattle(r:Run){
     const id=side+'-'+i;
     return {id,kind:k,side:side as Side,hp:units[k].hp,shield:0,bonus:side===0?(r.attackGrowth?.[id]??0):0,field:false};
   }));
-  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,lastingGrowth:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
+  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,lastingGrowth:true,immediateDeaths:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
@@ -109,39 +109,61 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
       }
     }
     if(u.kind==='medic'){
-      const candidates=near.filter(n=>n.hp<units[n.kind].hp);
+      const candidates=near.filter(n=>n.field&&n.hp>0&&n.hp<units[n.kind].hp);
       if(candidates.length){
         const t=pick(candidates,b),amount=Math.min(3,units[t.kind].hp-t.hp);t.hp+=amount;
         record('联动',label(u)+'为'+units[t.kind].name+'恢复'+amount+'点生命。',[u.id,t.id],{action:'heal',source:u.id,target:t.id,value:'+'+amount,valueTargets:[t.id]});
       }
     }
   }
-  const hits=selected.filter(u=>!arrivals.includes(u)).map(u=>{
-    const targets=b.units.filter(n=>n.side!==u.side&&n.field&&n.hp>0);
-    return {u,t:targets.length?pick(targets,b):undefined, damage:currentAttack(u)*(multipliers.get(u.id)??1)};
-  });
-  const dead=new Set<Unit>();
-  for(const {u,t,damage} of hits){
-    // Attacks are declared before damage. A fallen unit can finish its declared hit,
-    // but only a living guard can gain a shield.
-    if(!t&&!b.hp)continue;
+  const attackers=selected.filter(u=>!arrivals.includes(u));
+  const chooseTarget=(attacker:Unit)=>{
+    const targets=b.units.filter(u=>u.side!==attacker.side&&u.field&&u.hp>0);
+    return targets.length?pick(targets,b):undefined;
+  };
+  const attackDamage=(attacker:Unit)=>currentAttack(attacker)*(multipliers.get(attacker.id)??1);
+  const applyAttack=(u:Unit,t:Unit|undefined,damage:number)=>{
+    if(!t&&!b.hp)return;
     const shieldGain=!b.hp&&u.kind==='guard'&&u.hp>0?2:0;
     u.shield+=shieldGain;
     const other=(1-u.side) as Side;
     if(t){
-      const absorbed=Math.min(t.shield,damage);t.shield-=absorbed;t.hp=Math.max(0,t.hp-damage+absorbed);
-      if(t.hp===0)dead.add(t);
+      const absorbed=Math.min(t.shield,damage);
+      t.shield-=absorbed;
+      t.hp=Math.max(0,t.hp-damage+absorbed);
+      if(t.hp===0&&b.immediateDeaths)t.field=false;
     }else if(b.hp)b.hp[other]=Math.max(0,b.hp[other]-damage);
     const target=t?.id??'hero'+other;
     record('攻击',label(u)+'攻击'+(t?units[t.kind].name:'敌对英雄')+'，造成'+damage+'点伤害'+(shieldGain?'，自身获得2点护盾。':'。'),[u.id,target],{action:'attack',source:u.id,target,value:'−'+damage,shieldGain});
-  }
-  if(dead.size){
+  };
+  const resolveDeaths=(dead:Unit[])=>{
+    if(!dead.length)return;
     for(const u of dead)u.field=false;
-    record('阵亡',[...dead].map(label).join('、')+'退出本场。',[...dead].map(u=>u.id),{action:'death'});
-    const count=[...dead].filter(u=>u.kind==='page').length;
+    record('阵亡',dead.map(label).join('、')+'退出本场。',dead.map(u=>u.id),{action:'death'});
+    const count=dead.filter(u=>u.kind==='page').length;
     for(const u of b.units.filter(u=>u.kind==='king'&&u.field&&u.hp>0&&count)){
-      u.bonus+=2*count;record('阵亡',label(u)+'汲取侍从之力，攻击力+'+2*count+'。',[u.id],{value:'+'+2*count+' 攻'});
+      u.bonus+=2*count;
+      record('阵亡',label(u)+'汲取侍从之力，攻击力+'+2*count+'。',[u.id],{value:'+'+2*count+' 攻'});
     }
+  };
+
+  if(b.immediateDeaths){
+    for(const attacker of attackers){
+      if(!attacker.field||attacker.hp<=0)continue;
+      const target=chooseTarget(attacker);
+      if(!target)continue;
+      applyAttack(attacker,target,attackDamage(attacker));
+      if(target.hp===0)resolveDeaths([target]);
+    }
+  }else{
+    // Published replays from before immediate deaths retain their original hit order and RNG.
+    const hits=attackers.map(u=>({u,t:chooseTarget(u),damage:attackDamage(u)}));
+    const dead=new Set<Unit>();
+    for(const {u,t,damage} of hits){
+      applyAttack(u,t,damage);
+      if(t?.hp===0)dead.add(t);
+    }
+    resolveDeaths([...dead]);
   }
   for(const u of b.units)delete u.roundAttackBonus;
   return {next:b,events,outcome:outcome(b)};
