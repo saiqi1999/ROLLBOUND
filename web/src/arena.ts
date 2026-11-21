@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import {ATTACK_MS} from './timing.ts';
 import {flashHit} from './hit-flash.ts';
-import {units, type Kind} from './data.ts';
+import {units,hasGuardian,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Moment,type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
@@ -64,8 +64,9 @@ class Stage extends Phaser.Scene {
     const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const scale=Math.max(.8,Math.min(w/(count>6?170:130),h/(Math.ceil(count/(count>6?3:2))*44+20),3.6));
     const marked=active&&e?.action!=='attack';
-    const color=marked?0xf0cf89:u.side?0xb48283:0x86b69b;
-    this.add.ellipse(x,y+7,23*scale,5*scale,0x0c1413,.5).setStrokeStyle(marked?2:1,color,marked?1:.45);
+    const guarding=u.hp>0&&hasGuardian(u.kind);
+    const color=marked?0xf0cf89:guarding?0xadd5ef:u.side?0xb48283:0x86b69b;
+    this.add.ellipse(x,y+7,23*scale,5*scale,0x0c1413,.5).setStrokeStyle(marked||guarding?2:1,color,marked||guarding?1:.45);
     let move='idle';
     if(action==='death'&&active)move='death';
     if(e?.source===u.id){
@@ -80,7 +81,8 @@ class Stage extends Phaser.Scene {
       else sprite.play(key);
     }
     if(hit)flashHit(sprite,96/speed);
-    if(e?.target===u.id&&(action==='heal'||action==='empower')){
+    const receivesEffect=e?.target===u.id||(action==='empower'&&e?.valueTargets?.includes(u.id));
+    if(receivesEffect&&(action==='heal'||action==='empower')){
       const fxKey='fx-'+action;
       const fx=this.add.sprite(x,y+9,fxKey).setOrigin(.5,.60).setScale(scale);
       if(reducedMotion)fx.setFrame(1);

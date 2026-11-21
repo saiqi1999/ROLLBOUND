@@ -1,17 +1,26 @@
-import {units, encounters, offer, royal, type Kind, type Offer} from './data.ts';
+import {units, encounters, offer, royal, humanOffer, hasGuardian, type Kind, type Offer} from './data.ts';
 export type Side = 0|1;
 export const FIELD_LIMIT = 9;
-export type Unit = {id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean; roundAttackBonus?:number; healthBonus?:number; corpseConsumed?:true};
+export type Unit = {
+  id:string; kind:Kind; side:Side; hp:number; shield:number; bonus:number; field:boolean;
+  roundAttackBonus?:number; healthBonus?:number; corpseConsumed?:true;
+  battleAttackBonus?:number; battleHealthBonus?:number; revived?:true;
+};
 export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true; corpseRules?:true};
 export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'|'blocked'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function currentAttack(unit:Unit){
-  return units[unit.kind].atk+unit.bonus+(unit.roundAttackBonus??0);
+  return units[unit.kind].atk+unit.bonus+(unit.battleAttackBonus??0)+(unit.roundAttackBonus??0);
 }
 export function maxHealth(unit:Unit){
-  return units[unit.kind].hp+(unit.healthBonus??0);
+  return units[unit.kind].hp+(unit.healthBonus??0)+(unit.battleHealthBonus??0);
+}
+function grantBattleStats(unit:Unit,attack:number,health:number){
+  if(attack)unit.battleAttackBonus=(unit.battleAttackBonus??0)+attack;
+  unit.battleHealthBonus=(unit.battleHealthBonus??0)+health;
+  unit.hp+=health;
 }
 export function rng(s:{rng:number}) {
   s.rng=(Math.imul(1664525,s.rng)+1013904223)>>>0;
@@ -23,9 +32,9 @@ function shuffle<T>(items:T[],s:{rng:number}):T[] {
   return items;
 }
 export function shop(seed:number,stage:number) {
-  if(stage===0)return [offer(['medic'],3),royal(),offer(['guard'],2)];
+  if(stage===0)return [offer(['medic'],3),royal(),offer(['guard'],2),humanOffer(stage)];
   const s={rng:(seed ^ Math.imul(stage,0x9e3779b1))>>>0};
-  return [rng(s)<.5?offer(['medic'],3):offer(['guard'],2),rng(s)<.5?royal():offer(['page','page'],2,'纸甲侍从小队'),offer([rng(s)<.5?'guard':'archer'],2)];
+  return [rng(s)<.5?offer(['medic'],3):offer(['guard'],2),rng(s)<.5?royal():offer(['page','page'],2,'纸甲侍从小队'),offer([rng(s)<.5?'guard':'archer'],2),humanOffer(stage)];
 }
 export function newRun(seed:number):Run {
   return {version:1,seed,stage:0,gold:5,roster:['guard','archer','guard','archer'],offers:shop(seed,0),phase:'shop',battle:null,results:[],log:[],history:[]};
@@ -72,6 +81,22 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   const byId=new Map(b.units.map(u=>[u.id,u]));
   const record=(phase:string,text:string,focus:string[]=[],extra:Partial<Moment>={})=>events.push({phase,text,focus,state:copy(b),...extra});
   const label=(u:Unit)=>(u.side?'敌方':'我方')+units[u.kind].name;
+  const isHuman=(u:Unit)=>u.field&&u.hp>0&&units[u.kind].race==='human';
+  const humanAllies=(u:Unit)=>b.units.filter(n=>n.side===u.side&&isHuman(n));
+  const neighborsOf=(u:Unit)=>{
+    const board=b.boards[u.side],index=board.indexOf(u.id);
+    return board.flatMap((id,i)=>id&&adjacent(i,index)?[byId.get(id)!]:[]);
+  };
+  const recordBuff=(phase:string,u:Unit,targets:Unit[],description:string,value:string,action?:'empower')=>{
+    if(!targets.length)return;
+    const ids=targets.map(t=>t.id);
+    record(phase,label(u)+description,[...new Set([u.id,...ids])],{source:u.id,action,value,valueTargets:ids});
+  };
+  const grantHumanArmor=(u:Unit,phase:string)=>{
+    const allies=humanAllies(u);
+    for(const ally of allies)ally.shield+=3;
+    recordBuff(phase,u,allies,'使所有友方在场人类获得3点护甲。','+3 甲');
+  };
   const selected:Unit[]=[];
   b.round++;
   for(const side of [0,1] as const){
@@ -96,12 +121,29 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   }
   if(arrivals.size)record('召唤',arrivals.size+' 名单位登场。',[...arrivals].map(u=>u.id));
   if(blocked.length)record('召唤','场上已满，'+blocked.map(label).join('、')+'未能登场。',blocked.map(u=>u.id),{action:'blocked'});
+  for(const u of arrivals){
+    if(u.kind==='soldier'){
+      const allies=humanAllies(u);
+      for(const ally of allies)grantBattleStats(ally,0,1);
+      recordBuff('召唤',u,allies,'使所有友方在场人类获得+1生命值。','+1 ♥','empower');
+    }
+    if(u.kind==='swordsman'){
+      const allies=neighborsOf(u).filter(isHuman);
+      for(const ally of allies)grantBattleStats(ally,2,2);
+      recordBuff('召唤',u,allies,'使相邻的友方在场人类获得+2/+2。','+2/+2','empower');
+    }
+    if(u.kind==='axeman')grantHumanArmor(u,'召唤');
+  }
   const protectedIds=new Set<string>(), multipliers=new Map<string,number>();
   for(const u of selected){
     if(!u.field||u.hp<=0)continue;
     const board=b.boards[u.side],index=board.indexOf(u.id);
-    const neighbors=board.flatMap((id,i)=>id&&adjacent(i,index)?[byId.get(id)!]:[]);
+    const neighbors=neighborsOf(u);
     const near=neighbors.filter(n=>n.field&&n.hp>0);
+    if(u.kind==='lancer'&&board.some((id,i)=>id===null&&adjacent(i,index))){
+      grantBattleStats(u,2,1);
+      recordBuff('联动',u,[u],'邻接空位，获得+2/+1。','+2/+1','empower');
+    }
     if(b.corpseRules&&u.kind==='king'){
       const corpses=neighbors.filter(n=>n.hp<=0&&!n.corpseConsumed);
       if(corpses.length){
@@ -149,7 +191,8 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
   }
   const chooseTarget=(attacker:Unit)=>{
     const targets=b.units.filter(u=>u.side!==attacker.side&&u.field&&u.hp>0);
-    return targets.length?pick(targets,b):undefined;
+    const guardians=targets.filter(u=>hasGuardian(u.kind));
+    return targets.length?pick(guardians.length?guardians:targets,b):undefined;
   };
   const attackDamage=(attacker:Unit)=>currentAttack(attacker)*(multipliers.get(attacker.id)??1);
   const applyAttack=(u:Unit,t:Unit|undefined,damage:number)=>{
@@ -177,6 +220,20 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
       record('阵亡',label(u)+'汲取侍从之力，攻击力+'+2*count+'。',[u.id],{value:'+'+2*count+' 攻'});
     }
   };
+  const resolveLethalHit=(u:Unit)=>{
+    if(u.kind==='templar'&&!u.revived){
+      record('阵亡',label(u)+'倒下，即将复活。',[u.id],{action:'death'});
+      u.revived=true;
+      u.field=true;
+      u.hp=maxHealth(u);
+      const allies=humanAllies(u);
+      for(const ally of allies)grantBattleStats(ally,1,1);
+      recordBuff('复活',u,allies,'满血复活，使所有友方在场人类获得+1/+1。','+1/+1','empower');
+      return;
+    }
+    resolveDeaths([u]);
+    if(u.kind==='axeman')grantHumanArmor(u,'阵亡');
+  };
 
   if(b.immediateDeaths){
     for(const attacker of attackers){
@@ -184,7 +241,7 @@ export function step(start:Battle, order:'board'|'legacy'='board') {
       const target=chooseTarget(attacker);
       if(!target)continue;
       applyAttack(attacker,target,attackDamage(attacker));
-      if(target.hp===0)resolveDeaths([target]);
+      if(target.hp===0)resolveLethalHit(target);
     }
   }else{
     // Published replays from before immediate deaths retain their original hit order and RNG.

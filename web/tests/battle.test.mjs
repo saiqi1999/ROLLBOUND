@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,buy,startBattle,advance,step,commitRoll,outcome,maxHealth} from '../src/engine.ts';
+import {adjacent,newRun,buy,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
 import {units} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
@@ -262,4 +262,149 @@ test('the first adjacent king consumes every shared corpse once and grows before
     return;
   }
   assert.fail('missing two kings with shared neighbors');
+});
+
+test('the three shops offer all five human recruits within the starting budget',()=>{
+  const r=newRun(9);
+  const recruits=[['soldier','swordsman'],['axeman','lancer'],['templar']];
+  for(const kinds of recruits){
+    assert.deepEqual(r.offers[3].kinds,kinds);
+    assert.ok(buy(r,3));
+    startBattle(r);
+    const first=step(r.battle);
+    assert.deepEqual(first,step(r.battle));
+    commitRoll(r,{...first,outcome:'胜利'});
+    advance(r);
+  }
+  assert.equal(r.gold,1);
+  assert.equal(r.roster.length,9);
+});
+
+test('entry bonuses reach the correct deployed humans, including diagonal neighbors',()=>{
+  const b=field(['soldier','swordsman','archer','page'],['guard']);
+  b.units.forEach(u=>{u.field=false;});
+  for(let seed=0;seed<100;seed++){
+    b.rng=seed;
+    const {events,next}=step(b);
+    const grid=next.boards[0],a=grid.indexOf('0-1'),c=grid.indexOf('0-2');
+    if(Math.abs(a%3-c%3)!==1||Math.abs(Math.floor(a/3)-Math.floor(c/3))!==1)continue;
+    const soldier=events.find(e=>e.source==='0-0');
+    assert.deepEqual(soldier.valueTargets,['0-0','0-1','0-2']);
+    const sword=events.find(e=>e.source==='0-1');
+    assert.ok(sword.valueTargets.includes('0-2'));
+    assert.ok(!sword.valueTargets.includes('0-1'));
+    assert.ok(!sword.valueTargets.includes('0-3'));
+    const archer=next.units[2];
+    assert.equal(currentAttack(archer),5);
+    assert.equal(archer.hp,10);
+    assert.equal(maxHealth(archer),10);
+    assert.equal(next.units[3].hp,3);
+    assert.equal(next.units[4].hp,12);
+    assert.ok(step(next).events.every(e=>e.phase!=='召唤'));
+    return;
+  }
+  assert.fail('missing diagonal entry sample');
+});
+
+test('a full field suppresses the blocked soldier’s entry effect',()=>{
+  const b=field([...Array(9).fill('archer'),'soldier'],['orc']);
+  const soldier=b.units[9];
+  soldier.field=false;
+  for(let seed=0;seed<100;seed++){
+    b.rng=seed;
+    const result=step(b);
+    if(!result.events.some(e=>e.action==='blocked'&&e.focus.includes(soldier.id)))continue;
+    assert.ok(!result.events.some(e=>e.source===soldier.id));
+    assert.equal(result.next.units[0].battleHealthBonus,undefined);
+    return;
+  }
+  assert.fail('missing blocked soldier sample');
+});
+
+test('a guardian receives attacks first and axeman armor resolves on entry and death',()=>{
+  const b=field(['orc','orc'],['axeman','archer','page']);
+  const [,,axe,archer,page]=b.units;
+  axe.field=false;
+  const first=step(b);
+  const entry=first.events.find(e=>e.phase==='召唤'&&e.source===axe.id);
+  assert.deepEqual(entry.valueTargets,[axe.id,archer.id]);
+  assert.ok(first.events.filter(e=>e.action==='attack'&&e.source.startsWith('0-')).every(e=>e.target===axe.id));
+
+  axe.field=true;
+  axe.hp=1;
+  const {events}=step(b);
+  const hits=events.filter(e=>e.action==='attack'&&e.source.startsWith('0-'));
+  assert.equal(hits[0].target,axe.id);
+  assert.notEqual(hits[1].target,axe.id);
+  const armor=events.find(e=>e.phase==='阵亡'&&e.source===axe.id);
+  assert.deepEqual(armor.valueTargets,[archer.id]);
+  assert.equal(armor.state.units.find(u=>u.id===archer.id).shield,3);
+  assert.equal(armor.state.units.find(u=>u.id===page.id).shield,0);
+  assert.ok(events.indexOf(armor)<events.indexOf(hits[1]));
+});
+
+test('a lancer gains once with an adjacent vacancy and corpses fill wheel slots',()=>{
+  const b=field(['lancer',...Array(8).fill('page')],['orc']);
+  const ready=b.units[0];
+  b.units.slice(1,9).forEach(u=>{u.field=false;u.hp=0;});
+  assert.ok(step(b).events.every(e=>e.source!==ready.id||e.phase!=='联动'));
+  for(let seed=0;seed<100;seed++){
+    b.rng=seed;
+    b.units[1].corpseConsumed=true;
+    const result=step(b);
+    const grid=result.next.boards[0];
+    if(!adjacent(grid.indexOf(ready.id),grid.indexOf(null)))continue;
+    const gains=result.events.filter(e=>e.phase==='联动'&&e.source===ready.id);
+    assert.equal(gains.length,1);
+    assert.equal(currentAttack(gains[0].state.units[0]),4);
+    assert.equal(maxHealth(gains[0].state.units[0]),7);
+    return;
+  }
+  assert.fail('missing empty adjacent slot');
+});
+
+test('a templar revives at its boosted max health, keeps guarding, then leaves a corpse',()=>{
+  const b=field(['orc','orc','orc'],['templar','archer','bone']);
+  b.units.slice(0,3).forEach(u=>{u.bonus=20;});
+  const [, , ,templar,archer,bone]=b.units;
+  templar.hp=1;
+  templar.battleHealthBonus=2;
+  const {next,events}=step(b);
+  const hits=events.filter(e=>e.action==='attack'&&e.source.startsWith('0-'));
+  assert.equal(hits.length,3);
+  assert.equal(hits[0].target,templar.id);
+  assert.equal(hits[1].target,templar.id);
+  assert.notEqual(hits[2].target,templar.id);
+  const revivals=events.filter(e=>e.phase==='复活');
+  assert.equal(revivals.length,1);
+  const revive=revivals[0];
+  assert.deepEqual(revive.valueTargets,[templar.id,archer.id]);
+  const risen=revive.state.units.find(u=>u.id===templar.id);
+  assert.equal(risen.hp,12);
+  assert.equal(maxHealth(risen),12);
+  assert.equal(currentAttack(risen),3);
+  assert.ok(risen.field&&risen.revived);
+  assert.equal(next.units.find(u=>u.id===templar.id).hp,0);
+  assert.ok(step(next).events[0].state.boards[1].includes(templar.id));
+  assert.equal(revive.state.units.find(u=>u.id===bone.id).battleHealthBonus,undefined);
+});
+
+test('human stat buffs and revive usage reset between fights',()=>{
+  const r=newRun(7);
+  r.roster.push('templar');
+  startBattle(r);
+  const next=structuredClone(r.battle);
+  next.round=1;
+  const knight=next.units.find(u=>u.kind==='templar');
+  knight.battleAttackBonus=4;
+  knight.battleHealthBonus=3;
+  knight.revived=true;
+  commitRoll(r,{next,events:[],outcome:'胜利'});
+  advance(r);
+  startBattle(r);
+  const fresh=r.battle.units.find(u=>u.kind==='templar');
+  assert.equal(fresh.revived,undefined);
+  assert.equal(currentAttack(fresh),2);
+  assert.equal(maxHealth(fresh),9);
+  assert.equal(fresh.hp,9);
 });

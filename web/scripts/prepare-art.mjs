@@ -5,7 +5,10 @@ import {PNG} from 'pngjs';
 const root=fileURLToPath(new URL('../../Assets/Game/Art/Characters(100x100 split)/',import.meta.url));
 const dest=fileURLToPath(new URL('../public/art/',import.meta.url));
 await mkdir(dest,{recursive:true});
-const names={guard:'Knight',archer:'Archer',medic:'Priest',king:'Necromancer',page:'Skeleton',orc:'Orc',bone:'Skeleton Archer'};
+const names={
+  guard:'Knight',archer:'Archer',medic:'Priest',king:'Necromancer',page:'Skeleton',orc:'Orc',bone:'Skeleton Archer',
+  soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar'
+};
 const manifest={};
 for(const [id,name] of Object.entries(names)){
   manifest[id]={};
@@ -18,15 +21,17 @@ for(const [id,name] of Object.entries(names)){
     await writeFile(path.join(dest,id+'-'+move+'.png'),PNG.sync.write(sheet));
     manifest[id][move]=count;
     if(move==='idle'){
-      const badge=new PNG({width:40,height:36});
-      PNG.bitblt(src,badge,30,26,40,36,0,0);
+      const height=id==='lancer'?44:36;
+      const badge=new PNG({width:40,height});
+      PNG.bitblt(src,badge,30,62-height,40,height,0,0);
       await writeFile(path.join(dest,id+'.png'),PNG.sync.write(badge));
     }
     if(move==='death'){
       const badge=new PNG({width:40,height:36});
       // The Necromancer dissolves. Use its last recognizable pose before only particles remain.
       const pose=id==='king'?5:count-1;
-      PNG.bitblt(src,badge,pose*100+30,28,40,36,0,0);
+      const left=id==='swordsman'?42:id==='lancer'?35:30;
+      PNG.bitblt(src,badge,pose*100+left,28,40,36,0,0);
       await writeFile(path.join(dest,id+'-corpse.png'),PNG.sync.write(badge));
     }
   }
