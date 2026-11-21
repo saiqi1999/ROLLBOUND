@@ -1,4 +1,4 @@
-import {humanKinds,RECRUIT_GAIN,spells,units,wizardEntryGain} from '../data.ts';
+import {humanKinds,ORC_EVOLUTION_KILLS,RECRUIT_GAIN,spells,units,wizardEntryGain} from '../data.ts';
 import type {Battle,RecordMoment,Unit} from '../engine.ts';
 import {interruptActor,reviveActor} from './combat.ts';
 import type {WheelSkill} from './model.ts';
@@ -8,6 +8,7 @@ import {neighborSlots} from './wheel.ts';
 
 export const label=(unit:Unit)=>(unit.side?'敌方':'我方')+units[unit.kind].name;
 const isHuman=(unit:Unit)=>deployed(unit)&&units[unit.kind].race==='human';
+const isOrc=(unit:Unit)=>deployed(unit)&&units[unit.kind].race==='orc';
 const isCorpse=(unit:Unit)=>unit.hp<=0&&!unit.corpseConsumed;
 
 export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordMoment){
@@ -17,7 +18,7 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
   });
   const humanAllies=(source:Unit)=>battle.units.filter(other=>other.side===source.side&&isHuman(other));
   const buff=(
-    phase:'召唤'|'复活'|'阵亡',source:Unit,targets:Unit[],
+    phase:'召唤'|'复活'|'阵亡'|'攻击',source:Unit,targets:Unit[],
     description:string,value:string,action?:'empower',
   )=>{
     if(!targets.length)return;
@@ -66,10 +67,11 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
       const allies=humanAllies(unit);
       for(const ally of allies)grantBattleStats(ally,1,1);
       buff('复活',unit,allies,'满血复活，使所有友方在场人类获得+1/+1。','+1/+1','empower');
-      return;
+      return false;
     }
     record('阵亡',label(unit)+'阵亡，尸体留在轮盘池中。',[unit.id],{action:'death'});
     if(unit.kind==='axeman')grantHumanArmor(unit,'阵亡');
+    return true;
   }
 
   function castSpells(){
@@ -116,7 +118,7 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     switch(unit.kind){
       case 'king': return nearby.filter(isCorpse).map(other=>other.id);
       case 'archer': return nearby.filter(other=>deployed(other)&&other.kind==='guard').map(other=>other.id);
-      case 'bone': return nearby.filter(other=>deployed(other)&&other.kind==='orc').map(other=>other.id);
+      case 'bone': return nearby.filter(isOrc).map(other=>other.id);
       case 'medic': return nearby.filter(deployed).map(other=>other.id);
       default: return [];
     }
@@ -183,7 +185,23 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     if(target.hp===0)fall(target);
     record('攻击',label(unit)+'攻击'+units[target.kind].name+'，造成'+damage+'点伤害'+(shieldGain?'，自身获得2点护盾。':'。'),
       [unit.id,target.id],{action:'attack',source:unit.id,target:target.id,value:'−'+damage,damage,shieldGain});
-    if(target.hp===0)resolveLethalHit(target);
+    const killed=target.hp===0&&resolveLethalHit(target);
+    if(unit.kind==='armoredOrc'){
+      const allies=battle.units.filter(other=>other.side===unit.side&&isOrc(other));
+      for(const ally of allies)grantBattleStats(ally,1,1);
+      buff('攻击',unit,allies,'使所有友方在场兽人获得+1/+1。','+1/+1','empower');
+    }
+    if(killed&&unit.kind==='orc'){
+      unit.orcKills=(unit.orcKills??0)+1;
+      if(unit.orcKills>=ORC_EVOLUTION_KILLS){
+        const name=label(unit);
+        unit.kind='armoredOrc';
+        unit.hp+=units.armoredOrc.hp-units.orc.hp;
+        delete unit.orcKills;
+        record('进化',name+'进化为'+units.armoredOrc.name+'。',[unit.id],
+          {source:unit.id,target:unit.id,action:'empower',value:'进化'});
+      }
+    }
   }
 
   return {enter,castSpells,skillCandidates,skill,attack};

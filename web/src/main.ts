@@ -1,7 +1,7 @@
 import './style.css';
 import {COMBAT_TICK_MS,WHEEL_MOTION,type WheelMotion} from './timing.ts';
 import {frameMessage,playbackFrames,wheelCues,type PlaybackFrame} from './playback.ts';
-import {units,spells,encounters,races,hasGuardian,wizardEntryGain,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
+import {units,spells,encounters,races,hasGuardian,wizardEntryGain,ORC_EVOLUTION_KILLS,SLIME_REMOVAL_GAIN,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
 import {newRun,loadRun,canStartBattle,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Battle,type Run,type SavedRun} from './engine.ts';
 import {WHEEL_WIDTH} from './battle/wheel.ts';
 import {scenery} from './landscape.ts';
@@ -29,6 +29,7 @@ function save(){try{localStorage.setItem(key,JSON.stringify(run));}catch{saveWar
 const art=(k:Kind,cls='',corpse=false)=>'<img class="sprite '+cls+'" src="'+base+k+(corpse?'-corpse':'')+'.png" alt="">';
 const spellArt=(kind:SpellKind,cls='')=>'<img class="sprite '+cls+'" src="'+(kind==='recruit'?base+'spell-recruit.png':import.meta.env.BASE_URL+'spells/'+kind+'.png')+'" alt="">';
 const heart='♥', coin='<i class="coin" aria-hidden="true"></i>';
+const slimeRemovalBenefit='其余所有单位永久获得+'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。';
 const counts=(kinds:Kind[])=>Object.entries(kinds.reduce((a,k)=>(a[k]=(a[k]??0)+1,a),{} as Partial<Record<Kind,number>>)) as [Kind,number][];
 const opponentName=(stage:number)=>encounters[stage].name;
 function header(){
@@ -52,27 +53,36 @@ function wizardPreview(kind:Kind){
   const gain=wizardEntryGain(casts);
   return '<small class="unit-tags">下次入场增益 +'+gain+'/+'+gain+'</small>';
 }
+function orcProgress(kind:Kind,kills:number|undefined){
+  return kind==='orc'&&kills!==undefined?'<p>累计击杀 '+kills+' / '+ORC_EVOLUTION_KILLS+'</p>':'';
+}
 document.addEventListener('unit-info',((e:CustomEvent)=>{
   const v=e.detail;
-  modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p>'+wizardPreview(v.kind)+'<p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
+  modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p>'+wizardPreview(v.kind)+
+    orcProgress(v.kind,v.orcKills??0)+'<p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
 }) as EventListener);
-const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。各店依次发放 '+encounters.map(stage=>stage.gold).join('、')+' 金币，余款带入下一店。开局阵容为空，首战前至少招募一枚单位。每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。摇到候补单位时尝试召唤。已在场的单位会自行走位和普攻，轮盘相邻决定技能。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。单位优先随机锁定一名守护敌人，进入射程后出手。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
+const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。各店依次发放 '+encounters.map(stage=>stage.gold).join('、')+' 金币，余款带入下一店。开局阵容为空，首战前至少招募一枚单位。每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。摇到候补单位时尝试召唤。已在场的单位会自行走位和普攻，轮盘相邻决定技能。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。单位优先随机锁定一名守护敌人，进入射程后出手。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。亡灵法师可以消耗相邻尸体。第二摇起，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。永久加成跟随各自的棋子，保留至本局结束。</p>';
 function rosterStats(kind:Kind,index:number,growth?:Pick<Run,'attackGrowth'|'healthGrowth'>){
   const id='0-'+index;
   return {attack:units[kind].atk+(growth?.attackGrowth?.[id]??0),health:units[kind].hp+(growth?.healthGrowth?.[id]??0)};
 }
-function team(kinds:Kind[],growth?:Pick<Run,'attackGrowth'|'healthGrowth'>,boost={attack:0,health:0}){
-  const groups=new Map<string,{kind:Kind;attack:number;health:number;count:number}>();
+function team(kinds:Kind[],growth?:Pick<Run,'attackGrowth'|'healthGrowth'|'orcKills'>,boost={attack:0,health:0}){
+  const groups=new Map<string,{kind:Kind;attack:number;health:number;count:number;orcKills?:number}>();
   kinds.forEach((kind,index)=>{
     const stats=rosterStats(kind,index,growth);
     const attack=stats.attack+boost.attack;
     const health=stats.health+boost.health;
-    const key=kind+':'+attack+':'+health;
+    const orcKills=kind==='orc'&&growth?growth.orcKills['0-'+index]??0:undefined;
+    const key=kind+':'+attack+':'+health+':'+orcKills;
     const group=groups.get(key);
     if(group)group.count++;
-    else groups.set(key,{kind,attack,health,count:1});
+    else groups.set(key,{kind,attack,health,count:1,orcKills});
   });
-  return [...groups.values()].map(({kind,attack,health,count})=>'<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+'">'+art(kind)+'<span>'+units[kind].name+'</span><span>⚔ '+attack+' '+heart+' '+health+'</span><b>×'+count+'</b></button>').join('');
+  return [...groups.values()].map(({kind,attack,health,count,orcKills})=>
+    '<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+'"'+
+    (orcKills===undefined?'':' data-orc-kills="'+orcKills+'"')+'>'+art(kind)+'<span>'+units[kind].name+
+    (orcKills?' '+orcKills+'/'+ORC_EVOLUTION_KILLS:'')+'</span><span>⚔ '+attack+' '+heart+' '+health+'</span><b>×'+count+'</b></button>'
+  ).join('');
 }
 function spellInventory(){
   const owned=run.spells??[];
@@ -142,6 +152,7 @@ function shopView(){
 function removalView(){
   const markers=removalMarkers(run);
   const selectedKind=removalSelection===undefined?undefined:run.roster[removalSelection];
+  const benefit=selectedKind==='slime'&&run.roster.length>1?slimeRemovalBenefit:'';
   const pieces=run.roster.map((kind,index)=>{
     const stats=rosterStats(kind,index,run);
     return '<button class="removal-unit" data-remove-index="'+index+'" aria-pressed="'+(removalSelection===index)+'" '+(markers?'':'disabled')+'>'
@@ -150,7 +161,7 @@ function removalView(){
   app.innerHTML=header()+'<section class="removal-shop"><div class="removal-heading"><div><h1>移除棋子</h1><p>第 2、4、6 战胜利时各获得 1 个移除标记。</p></div>'
     +'<button class="quiet" data-act="back-shop">返回商店</button></div><p class="removal-balance">移除标记 <strong>'+markers+'</strong>　·　阵容 '+run.roster.length+' 枚</p>'
     +(pieces?'<div class="removal-roster">'+pieces+'</div>':'<p>阵容为空，可返回商店招募棋子。</p>')
-    +'<div class="removal-action"><p>'+(selectedKind?'将从本局阵容移除 '+units[selectedKind].name+'。':markers&&pieces?'选择要移除的一枚棋子。':'')+'</p>'
+    +'<div class="removal-action"><p>'+(selectedKind?'将从本局阵容移除 '+units[selectedKind].name+'。'+benefit:markers&&pieces?'选择要移除的一枚棋子。':'')+'</p>'
     +'<button class="remove-confirm" data-act="confirm-removal" '+(selectedKind&&markers?'':'disabled')+'>移除 · 1 标记</button></div>'
     +'<p class="removal-notice" role="status">'+removalNotice+'</p></section>';
 }
@@ -252,7 +263,7 @@ function paint(){
         (fading?.dataset.spell as SpellKind|undefined);
       const unit=b.units.find(u=>u.id===id);
       const alive=unit&&unit.hp>0;
-      const key=unit?unit.id+(alive?'':'-corpse'):id??'empty';
+      const key=unit?unit.id+':'+unit.kind+(alive?'':'-corpse'):id??'empty';
       const tile=replaceTile(grid,i,key,()=>{
         if(spell)return '<button class="cell" data-spell="'+spell+'" aria-label="'+spells[spell].name+'">'+spellArt(spell)+'</button>';
         if(!unit)return '<span class="cell empty">·</span>';
@@ -271,6 +282,7 @@ function paint(){
         tile.setAttribute('aria-label',units[unit.kind].name+(guarding?'，守护':''));
         tile.dataset.attack=String(currentAttack(unit));
         tile.dataset.health=String(maxHealth(unit));
+        if(unit.kind==='orc')tile.dataset.orcKills=String(unit.orcKills??0);
       }
       if(id)tiles.set(id,tile);
     });
@@ -363,7 +375,13 @@ function render(){
 }
 app.addEventListener('click',event=>{
   const el=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!el||el.disabled)return;
-  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+unitTags(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+(Number(el.dataset.health)||units[k].hp)+'</p><p>'+units[k].text+'</p>'+wizardPreview(k));return;}
+  if(el.dataset.kind){
+    const k=el.dataset.kind as Kind;
+    const kills=el.dataset.orcKills===undefined?undefined:Number(el.dataset.orcKills);
+    modal(units[k].name,art(k)+unitTags(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+
+      (Number(el.dataset.health)||units[k].hp)+'</p><p>'+units[k].text+'</p>'+wizardPreview(k)+orcProgress(k,kills));
+    return;
+  }
   if(el.dataset.spell){
     const kind=el.dataset.spell as SpellKind;
     modal(spells[kind].name,spellArt(kind)+'<p>'+spells[kind].text+'</p><p>首次摇到时施放并消耗。</p>');
@@ -378,7 +396,8 @@ app.addEventListener('click',event=>{
       save();
       paintShopPurchases();
       if(keepFocus)details?.focus({preventScroll:true});
-      app.querySelector('#purchase-status')!.textContent=(offer.spell?'已购买 ':'已招募 ')+offer.title+'，剩余 '+run.gold+' 金币。';
+      const extras=offer.kinds[0]==='king'?'与 '+(offer.kinds.length-1)+' 个'+units.page.name:'';
+      app.querySelector('#purchase-status')!.textContent=(offer.spell?'已购买 ':'已招募 ')+offer.title+extras+'，剩余 '+run.gold+' 金币。';
     }
     return;
   }
@@ -410,7 +429,8 @@ app.addEventListener('click',event=>{
       if(removalOpen&&removalSelection!==undefined){
         const kind=run.roster[removalSelection];
         if(removeUnit(run,removalSelection)){
-          removalSelection=undefined;removalNotice='已移除 '+units[kind].name+'。';
+          removalSelection=undefined;removalNotice='已移除 '+units[kind].name+'。'+
+            (kind==='slime'&&run.roster.length?slimeRemovalBenefit:'');
           save();render();
           const next=app.querySelector<HTMLElement>('.removal-unit:not(:disabled)')??app.querySelector<HTMLElement>('[data-act="back-shop"]');
           next?.focus();

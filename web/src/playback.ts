@@ -34,7 +34,7 @@ export function wheelCues(frame:PlaybackFrame|undefined){
     if(!focus.length)continue;
     if(spell)cues.push({moment,motion:'cast'});
     else if(action==='blocked')cues.push({moment,motion:'shake'});
-    else if((phase==='联动'&&originRoll===frame?.state.round)||
+    else if(phase==='进化'||(phase==='联动'&&originRoll===frame?.state.round)||
       (valueTargets?.length&&(phase==='召唤'||phase==='阵亡'||phase==='复活')))cues.push({moment,motion:'orbit'});
   }
   return cues;
@@ -42,6 +42,8 @@ export function wheelCues(frame:PlaybackFrame|undefined){
 
 export function frameMessage(frame:PlaybackFrame|undefined){
   const moments=frame?.moments??[];
+  const evolution=moments.find(moment=>moment.phase==='进化');
+  if(evolution)return {phase:evolution.phase,text:evolution.text};
   const attacks=moments.filter(moment=>moment.action==='attack');
   if(attacks.length>1)return {phase:'攻击',text:attacks.length+' 名单位出手。'};
   const moment=attacks[0]??moments.find(moment=>moment.spell)??

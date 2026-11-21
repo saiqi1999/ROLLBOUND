@@ -1,4 +1,4 @@
-import {unitKinds,spellKinds,spellOffer,encounters,unitOffer,REFRESH_COST,type Kind,type Offer,type SpellKind} from './data.ts';
+import {unitKinds,spellKinds,spellOffer,encounters,unitOffer,REFRESH_COST,SLIME_REMOVAL_GAIN,type Kind,type Offer,type SpellKind} from './data.ts';
 import {advanceCombatTick,queueSkill,spawnActor} from './battle/combat.ts';
 import {createEffects,label} from './battle/effects.ts';
 import {COMBAT,createCombat,type CombatRuntime} from './battle/model.ts';
@@ -11,13 +11,13 @@ export {adjacent,FIELD_LIMIT} from './battle/wheel.ts';
 export type Side = 0|1;
 export type Unit = {
   id:string;kind:Kind;side:Side;hp:number;shield:number;bonus:number;healthBonus:number;field:boolean;
-  nextAttackBonus?:number;corpseConsumed?:true;battleAttackBonus?:number;battleHealthBonus?:number;revived?:true;
+  nextAttackBonus?:number;corpseConsumed?:true;battleAttackBonus?:number;battleHealthBonus?:number;revived?:true;orcKills?:number;
 };
 export type Battle = {
   round:number;rng:number;units:Unit[];boards:(string|null)[][];spells:{id:string;kind:SpellKind}[];
   spellCasts:number;runtime:CombatRuntime;
 };
-type Phase = '停盘'|'召唤'|'法术'|'联动'|'移动'|'攻击'|'阵亡'|'复活';
+type Phase = '停盘'|'召唤'|'法术'|'联动'|'移动'|'攻击'|'阵亡'|'复活'|'进化';
 export type Moment = {
   phase:Phase;text:string;focus:string[];state:Battle;originRoll?:number;
   action?:'attack'|'death'|'heal'|'empower'|'blocked';spell?:SpellKind;
@@ -31,7 +31,7 @@ export type CombatTick = {state:Battle;from:number;until:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {
   version:3;seed:number;stage:number;gold:number;roster:Kind[];spells:SpellKind[];spellCasts:number;
-  attackGrowth:Record<string,number>;healthGrowth:Record<string,number>;
+  attackGrowth:Record<string,number>;healthGrowth:Record<string,number>;orcKills:Record<string,number>;
   offers:Offer[];refreshes:number;removalsUsed:number;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
   results:Outcome[];log:string[];history:Battle[];
@@ -44,16 +44,20 @@ export function shop(seed:number,stage:number,refreshes=0) {
   return offers;
 }
 export function newRun(seed:number):Run {
-  return {version:3,seed,stage:0,gold:encounters[0].gold,roster:[],offers:shop(seed,0),spells:[],spellCasts:0,attackGrowth:{},healthGrowth:{},refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
+  return {version:3,seed,stage:0,gold:encounters[0].gold,roster:[],offers:shop(seed,0),spells:[],spellCasts:0,attackGrowth:{},healthGrowth:{},orcKills:{},refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
 }
-export type SavedRun = Run|(Omit<Run,'version'>&{version:2});
+export type SavedRun = Omit<Run,'version'|'orcKills'>&{version:2|3;orcKills?:Run['orcKills']};
 
 export function loadRun(saved:SavedRun):Run{
-  if(saved.version===3)return saved;
-  if(saved.phase!=='shop'||saved.stage!==0)return {...saved,version:3};
+  const offers=saved.offers.map(offer=>offer.spell?offer:{
+    ...unitOffer(offer.kinds[0]),price:offer.price,sold:offer.sold,
+  });
+  const run:Run={...saved,version:3,orcKills:saved.orcKills??{},offers};
+  if(saved.version===3||saved.phase!=='shop'||saved.stage!==0)return run;
   const starters=['guard','guard','soldier'];
-  const roster=starters.every((kind,i)=>saved.roster[i]===kind)?saved.roster.slice(starters.length):saved.roster;
-  return {...saved,version:3,roster,gold:saved.gold+encounters[0].gold-5};
+  if(starters.every((kind,i)=>run.roster[i]===kind))run.roster=run.roster.slice(starters.length);
+  run.gold+=encounters[0].gold-5;
+  return run;
 }
 
 export function canStartBattle(run:Run){
@@ -82,27 +86,40 @@ export function removalMarkers(run:Run){
   const earned=run.results.filter((result,stage)=>earnedRemovalMarker(stage,result)).length;
   return Math.max(0,earned-run.removalsUsed);
 }
-function shiftGrowth(growth:Record<string,number>,removed:number,length:number){
+function shiftRosterValues(values:Record<string,number>,removed:number,length:number){
   const shifted:Record<string,number>={};
   for(let index=0;index<length;index++){
-    const prior=growth['0-'+(index<removed?index:index+1)];
+    const prior=values['0-'+(index<removed?index:index+1)];
     if(prior!==undefined)shifted['0-'+index]=prior;
   }
   return shifted;
 }
 export function removeUnit(run:Run,index:number){
   if(run.phase!=='shop'||!Number.isInteger(index)||index<0||index>=run.roster.length||!removalMarkers(run))return false;
-  run.roster.splice(index,1);
-  // Battle IDs are derived from roster position. Keep both bonuses attached to their owners.
-  run.attackGrowth=shiftGrowth(run.attackGrowth,index,run.roster.length);
-  run.healthGrowth=shiftGrowth(run.healthGrowth,index,run.roster.length);
+  const [removed]=run.roster.splice(index,1);
+  // Battle IDs are derived from roster position. Keep the counters attached to their owners.
+  run.attackGrowth=shiftRosterValues(run.attackGrowth,index,run.roster.length);
+  run.healthGrowth=shiftRosterValues(run.healthGrowth,index,run.roster.length);
+  run.orcKills=shiftRosterValues(run.orcKills,index,run.roster.length);
+  if(removed==='slime'){
+    for(let i=0;i<run.roster.length;i++){
+      const id='0-'+i;
+      run.attackGrowth[id]=(run.attackGrowth[id]??0)+SLIME_REMOVAL_GAIN;
+      run.healthGrowth[id]=(run.healthGrowth[id]??0)+SLIME_REMOVAL_GAIN;
+    }
+  }
   run.removalsUsed=run.removalsUsed+1;
   return true;
 }
 export function startBattle(r:Run){
   if(!canStartBattle(r))return false;
   const encounter=encounters[r.stage];
-  const allies=r.roster.map((kind,index)=>makeUnit(kind,0,index,r.attackGrowth['0-'+index]??0,r.healthGrowth['0-'+index]??0));
+  const allies=r.roster.map((kind,index)=>{
+    const id='0-'+index;
+    const unit=makeUnit(kind,0,index,r.attackGrowth[id]??0,r.healthGrowth[id]??0);
+    if(kind==='orc'&&r.orcKills[id])unit.orcKills=r.orcKills[id];
+    return unit;
+  });
   const enemies=encounter.units.map((kind,index)=>makeUnit(kind,1,index,encounter.attack,encounter.health));
   const seed=(r.seed^Math.imul(r.stage+1,2654435761))>>>0;
   r.battle={
@@ -192,9 +209,11 @@ export function commitRoll(run:Run,result:Omit<ReturnType<typeof step>,'ticks'>)
   run.battle=result.next;
   run.log.push(...result.events.filter(event=>event.phase!=='移动').map(event=>'第'+result.next.round+'摇 · '+event.text));
   const allies=result.next.units.filter(unit=>unit.side===0);
-  for(const unit of allies.slice(run.roster.length))run.roster.push(unit.kind);
+  run.roster=allies.map(unit=>unit.kind);
   run.attackGrowth=Object.fromEntries(allies.filter(unit=>unit.bonus>0).map(unit=>[unit.id,unit.bonus]));
   run.healthGrowth=Object.fromEntries(allies.filter(unit=>unit.healthBonus>0).map(unit=>[unit.id,unit.healthBonus]));
+  run.orcKills={};
+  for(const unit of allies)if(unit.orcKills)run.orcKills[unit.id]=unit.orcKills;
   run.spells=result.next.spells.map(spell=>spell.kind);
   run.spellCasts=result.next.spellCasts;
   if(result.outcome){

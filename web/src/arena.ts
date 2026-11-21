@@ -102,6 +102,10 @@ class Stage extends Phaser.Scene {
         const start=entrance?project(entrance.position):{x,y};
         view=this.createActor(unit,start.x,start.y);
       }
+      if(view.unit.kind!==unit.kind){
+        view.pose=undefined;
+        view.sprite.stop().setTexture(unit.kind+'-idle',0);
+      }
       view.unit=unit;
       const {sprite,ground,root}=view;
       this.moveActor(view,x,y,animate&&!snap);
@@ -218,7 +222,7 @@ class Stage extends Phaser.Scene {
     sprite.setInteractive().on('pointerdown',()=>{
       const current=view.unit;
       document.dispatchEvent(new CustomEvent('unit-info',{
-        detail:{kind:current.kind,name:units[current.kind].name,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield},
+        detail:{kind:current.kind,name:units[current.kind].name,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield,orcKills:current.orcKills},
       }));
     });
     sprite.on(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>{

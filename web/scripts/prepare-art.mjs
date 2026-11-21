@@ -7,7 +7,8 @@ const dest=fileURLToPath(new URL('../public/art/',import.meta.url));
 await mkdir(dest,{recursive:true});
 const names={
   guard:'Knight',archer:'Archer',medic:'Priest',king:'Necromancer',page:'Skeleton',orc:'Orc',bone:'Skeleton Archer',
-  soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard'
+  soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
+  armoredOrc:'Armored Orc',slime:'Slime'
 };
 const manifest={};
 for(const [id,name] of Object.entries(names)){
