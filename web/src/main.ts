@@ -1,6 +1,6 @@
 import './style.css';
-import {COMBAT_TICK_MS,WHEEL_MOTION} from './timing.ts';
-import {frameMessage,playbackFrames,type PlaybackFrame} from './playback.ts';
+import {COMBAT_TICK_MS,WHEEL_MOTION,type WheelMotion} from './timing.ts';
+import {frameMessage,playbackFrames,wheelCues,type PlaybackFrame} from './playback.ts';
 import {units,spells,encounters,races,hasGuardian,wizardEntryGain,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
 import {newRun,shop,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Battle,type Run} from './engine.ts';
 import {WHEEL_WIDTH} from './battle/wheel.ts';
@@ -20,10 +20,10 @@ function read():Run{
 }
 let run=read(), selected=0, timer=0, paused=false, speed=1, index=0, pending:ReturnType<typeof step>|undefined;
 let startedAt=0,remaining=0;
-let frames:PlaybackFrame[]=[];
+let frames:PlaybackFrame[]=[],playbackStart:Battle|undefined;
 let wheelRound=-1;
 const wheelAnimations=new Set<Animation>();
-let arena:typeof Arena|undefined, token=0,replay=false,resumeAfterDialog=false,saveWarning=false;
+let arena:typeof Arena|undefined, arenaReady=false,token=0,replay=false,resumeAfterDialog=false,saveWarning=false;
 let removalOpen=false, removalSelection:number|undefined, removalNotice='';
 function save(){try{localStorage.setItem(key,JSON.stringify(run));}catch{saveWarning=true;}}
 const art=(k:Kind,cls='',corpse=false)=>'<img class="sprite '+cls+'" src="'+base+k+(corpse?'-corpse':'')+'.png" alt="">';
@@ -121,13 +121,27 @@ function removalView(){
     +'<p class="removal-notice" role="status">'+removalNotice+'</p></section>';
 }
 function battleShell(){
-  const rev=++token;wheelRound=-1;app.innerHTML=header()+'<section class="battle"><div class="battle-title"><div><small class="kicker">第 '+(run.stage+1)+' 战 / '+encounters.length+'</small><h1>'+opponentName(run.stage)+'</h1></div><div class="round" id="round"></div></div><div class="commanders"><span id="team0"></span><b>VS</b><span id="team1"></span></div><div class="theatre"><div id="wheel0" class="wheel"></div><div class="arena-wrap"><canvas id="scenery"></canvas><div id="arena" aria-label="自动战斗场面"></div></div><div id="wheel1" class="wheel enemy"></div></div><aside class="feed" aria-live="polite"><b id="phase"></b><span id="message"></span></aside><div class="controls"><button data-act="pause" id="pause"></button><button data-act="step">单步</button><button data-act="speed" id="speed"></button><button data-act="log">战报</button><button data-act="skip">'+(replay?'结束回看':'快速结算')+'</button></div></section>';
+  const rev=++token;wheelRound=-1;arenaReady=false;app.innerHTML=header()+'<section class="battle"><div class="battle-title"><div><small class="kicker">第 '+(run.stage+1)+' 战 / '+encounters.length+'</small><h1>'+opponentName(run.stage)+'</h1></div><div class="round" id="round"></div></div><div class="commanders"><span id="team0"></span><b>VS</b><span id="team1"></span></div><div class="theatre"><div id="wheel0" class="wheel"></div><div class="arena-wrap"><canvas id="scenery"></canvas><div id="arena" aria-label="自动战斗场面"></div></div><div id="wheel1" class="wheel enemy"></div></div><aside class="feed" aria-live="polite"><b id="phase"></b><span id="message"></span></aside><div class="controls"><button data-act="pause" id="pause"></button><button data-act="step">单步</button><button data-act="speed" id="speed"></button><button data-act="log">战报</button><button data-act="skip">'+(replay?'结束回看':'快速结算')+'</button></div></section>';
   scenery(document.querySelector('#scenery')!,'guard');const host=document.querySelector<HTMLElement>('#arena')!;
-  void import('./arena.ts').then(a=>{if(token!==rev)return;arena=a;a.mountArena(host);a.paintArena(currentState(),currentFrame(),speed,paused);});
+  const ready=()=>{
+    if(token!==rev)return;
+    arenaReady=true;
+    schedule();
+  };
+  void import('./arena.ts').then(a=>{
+    if(token!==rev)return;
+    arena=a;
+    a.mountArena(host,ready);
+    a.paintArena(currentState(),currentFrame(),speed,paused);
+  }).catch(error=>{
+    if(token!==rev)return;
+    console.error('Unable to load the battle arena',error);
+    ready();
+  });
   paint();
 }
 function currentFrame():PlaybackFrame|undefined{return frames[index-1];}
-function currentState(){return currentFrame()?.state??run.battle!;}
+function currentState(){return currentFrame()?.state??playbackStart??run.battle!;}
 function setWheelSpeed(){
   for(const animation of wheelAnimations){
     if(animation.playbackRate!==speed)animation.updatePlaybackRate(speed);
@@ -139,16 +153,24 @@ function clearWheelAnimations(){
   for(const animation of wheelAnimations)animation.cancel();
   wheelAnimations.clear();
 }
-function pulseCell(cell:HTMLElement,delay:number){
-  const timing={duration:WHEEL_MOTION.orbit,delay};
-  const color={borderColor:'#f4c977',backgroundColor:'#5d5739'};
+function pulseCell(cell:HTMLElement,motion:WheelMotion,delay:number){
+  const timing={duration:WHEEL_MOTION[motion],delay};
+  const color=motion==='shake'?{borderColor:'#d79080',backgroundColor:'#503b39'}:
+    motion==='cast'?{borderColor:'#cae2a8',backgroundColor:'#4b5b3b'}:
+    {borderColor:'#f4c977',backgroundColor:'#5d5739'};
   const animations=[cell.animate([color,color],timing)];
   const icon=cell.querySelector('.sprite');
   if(icon&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
-    const keyframes=[0,.25,.5,.75,1].map(turn=>({
-      transform:'translateX(-3px) rotate('+turn+'turn) translateX(3px) rotate('+(-turn)+'turn)',
-    }));
-    animations.push(icon.animate(keyframes,timing));
+    if(motion==='orbit'){
+      const keyframes=[0,.25,.5,.75,1].map(turn=>({
+        transform:'translateX(-3px) rotate('+turn+'turn) translateX(3px) rotate('+(-turn)+'turn)',
+      }));
+      animations.push(icon.animate(keyframes,timing));
+    }else if(motion==='shake'){
+      const keyframes=[[0,0],[.22,-3],[.45,3],[.67,-3],[.84,3],[1,0]]
+        .map(([offset,x])=>({offset,transform:'translateX('+x+'px)'}));
+      animations.push(icon.animate(keyframes,timing));
+    }
   }
   for(const animation of animations){
     animation.updatePlaybackRate(speed);
@@ -169,20 +191,13 @@ function replaceTile(grid:Element,index:number,key:string,html:()=>string){
   return tile;
 }
 function paint(){
-  const frame=currentFrame(),b=currentState(),prelude=frame?.kind==='wheel'?frame.moments[0]:undefined;
-  const buff=prelude?.valueTargets?.length&&(prelude.phase==='召唤'||prelude.phase==='复活'||prelude.phase==='阵亡');
-  const motion=prelude?.action==='blocked'?'shake':buff?'orbit':undefined;
-  if(motion)app.style.setProperty('--wheel-duration',WHEEL_MOTION[motion]/speed+'ms');
+  const frame=currentFrame(),b=currentState();
   const freshBoard=b.round!==wheelRound;
   if(freshBoard||paused)clearWheelAnimations();
   wheelRound=b.round;
   const tiles=new Map<string,HTMLElement>();
-  const marks=frame?.moments.filter(e=>{
-    const growth=e.phase==='联动'&&e.originRoll===b.round;
-    const passive=frame.kind==='combat'&&e.valueTargets?.length&&(e.phase==='阵亡'||e.phase==='复活');
-    return growth||passive;
-  })??[];
-  const stillMarks=paused?new Set(marks.flatMap(mark=>mark.focus)):undefined;
+  const cues=wheelCues(frame);
+  const stillCues=new Map(paused?cues.flatMap(({moment,motion})=>moment.focus.map(id=>[id,motion] as const)):[]);
   for(const side of [0,1]){
     const board=b.boards[side],living=b.units.filter(u=>u.side===side&&u.hp>0);
     document.querySelector('#team'+side)!.textContent=(side?'敌方':'我方')+'在场 '+living.filter(u=>u.field).length+'/'+FIELD_LIMIT;
@@ -192,16 +207,20 @@ function paint(){
     const grid=host.querySelector('.grid')!;
     board.forEach((occupant,i)=>{
       const previous=grid.children[i] as HTMLElement|undefined;
-      const leaving=marks.map(mark=>mark.state.boards[side][i]).find(id=>
-        id&&b.units.some(unit=>unit.id===id&&unit.corpseConsumed),
-      );
-      const fading=!freshBoard&&!paused&&previous?.getAnimations().some(a=>a.playState==='running')?previous.dataset.leaving:undefined;
-      const id=occupant??leaving??fading;
-      const spell=b.spells.find(s=>s.id===id);
+      const leaving=occupant===null?cues.find(({moment})=>{
+        const id=moment.state.boards[side][i];
+        return id&&moment.focus.includes(id);
+      })?.moment.state:undefined;
+      const fading=!occupant&&!freshBoard&&!paused&&previous?.dataset.leaving&&
+        previous.getAnimations().some(animation=>animation.playState==='running')?previous:undefined;
+      const id=occupant??leaving?.boards[side][i]??fading?.dataset.leaving;
+      const spell=(b.spells.find(s=>s.id===id)??leaving?.spells.find(s=>s.id===id))?.kind??
+        (fading?.dataset.spell as SpellKind|undefined);
       const unit=b.units.find(u=>u.id===id);
       const alive=unit&&unit.hp>0;
-      const tile=replaceTile(grid,i,spell?spell.id:unit?unit.id+(alive?'':'-corpse'):'empty',()=>{
-        if(spell)return '<button class="cell" data-spell="'+spell.kind+'" aria-label="'+spells[spell.kind].name+'">'+spellArt(spell.kind)+'</button>';
+      const key=unit?unit.id+(alive?'':'-corpse'):id??'empty';
+      const tile=replaceTile(grid,i,key,()=>{
+        if(spell)return '<button class="cell" data-spell="'+spell+'" aria-label="'+spells[spell].name+'">'+spellArt(spell)+'</button>';
         if(!unit)return '<span class="cell empty">·</span>';
         const name=units[unit.kind].name;
         if(!alive)return '<span class="cell fallen" role="img" aria-label="'+name+'的尸体">'+art(unit.kind,'',true)+'</span>';
@@ -209,10 +228,9 @@ function paint(){
       });
       if(id&&!occupant)tile.dataset.leaving=id;
       else delete tile.dataset.leaving;
-      const focused=!!id&&!!prelude?.focus.includes(id);
-      tile.classList.toggle('lit',!!id&&((focused&&motion!=='shake')||!!stillMarks?.has(id)));
-      if(focused&&motion)tile.dataset.motion=motion;
-      else delete tile.dataset.motion;
+      const still=id?stillCues.get(id):undefined;
+      tile.classList.toggle('lit',!!still&&still!=='shake');
+      tile.classList.toggle('blocked',still==='shake');
       if(alive){
         const guarding=unit.field&&hasGuardian(unit.kind);
         tile.classList.toggle('guardian',guarding);
@@ -223,12 +241,12 @@ function paint(){
       if(id)tiles.set(id,tile);
     });
   }
-  if(!paused&&marks.length){
-    const spacing=Math.min(55,COMBAT_TICK_MS/marks.length);
-    marks.forEach((mark,i)=>{
-      for(const id of mark.focus){
+  if(!paused&&cues.length){
+    const spacing=Math.min(55,COMBAT_TICK_MS/cues.length);
+    cues.forEach(({moment,motion},i)=>{
+      for(const id of moment.focus){
         const tile=tiles.get(id);
-        if(tile)pulseCell(tile,i*spacing);
+        if(tile)pulseCell(tile,motion,i*spacing);
       }
     });
   }
@@ -240,7 +258,6 @@ function paint(){
   arena?.paintArena(b,frame,speed,paused);
 }
 function paintControls(){
-  app.classList.toggle('battle-paused',paused);
   setWheelSpeed();
   arena?.setArenaPlayback(speed,paused);
   document.querySelector('#pause')!.textContent=paused?'继续':'暂停';document.querySelector('#speed')!.textContent=speed+'×';
@@ -254,9 +271,9 @@ function stopTimer(){
 function schedule(reset=false){
   if(reset){
     stopTimer();
-    remaining=currentFrame()?.duration??380;
+    remaining=currentFrame()?.duration??0;
   }
-  if(paused||timer)return;
+  if(!arenaReady||paused||timer)return;
   startedAt=performance.now();
   timer=window.setTimeout(()=>{
     timer=0;
@@ -265,6 +282,7 @@ function schedule(reset=false){
   },remaining/speed);
 }
 function preparePlayback(battle:Battle){
+  playbackStart=battle;
   pending=step(battle);
   frames=playbackFrames(pending);
   index=0;
@@ -274,12 +292,12 @@ function tick(){
   if(!pending)preparePlayback(run.battle!);
   if(index<frames.length){index++;paint();schedule(true);return;}
   if(replay){leaveBattle();render();return;}
-  commitRoll(run,pending!);pending=undefined;frames=[];index=0;save();
+  commitRoll(run,pending!);pending=undefined;playbackStart=undefined;frames=[];index=0;save();
   if(run.phase!=='battle'){leaveBattle();render();return;}
   tick();
 }
 function togglePause(){paused=!paused;if(paused)stopTimer();else schedule();paintControls();}
-function leaveBattle(){stopTimer();clearWheelAnimations();frames=[];token++;arena?.closeArena();arena=undefined;replay=false;pending=undefined;index=0;}
+function leaveBattle(){stopTimer();clearWheelAnimations();frames=[];playbackStart=undefined;arenaReady=false;token++;arena?.closeArena();arena=undefined;replay=false;pending=undefined;index=0;}
 function fastFinish(){
   if(replay){leaveBattle();render();return;}
   stopTimer();
@@ -359,7 +377,7 @@ app.addEventListener('click',event=>{
       modal('战斗记录','<ol>'+lines.map(l=>'<li>'+l+'</li>').join('')+'</ol>'+(lines.length?'':'<p>第一摇即将开始。</p>'));break;
     }
     case 'replay':{
-      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);const checkpoint=run.history[round];preparePlayback(checkpoint);index=1;replay=true;paused=false;battleShell();schedule(true);break;
+      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);const checkpoint=run.history[round];preparePlayback(checkpoint);replay=true;paused=false;battleShell();schedule(true);break;
     }
   }
 });

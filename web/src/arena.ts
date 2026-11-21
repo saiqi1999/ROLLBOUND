@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import {ATTACK_MS,COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
 import {actorFeedback,type ActorFeedback,type ActorEffect,type PlaybackFrame} from './playback.ts';
-import {COMBAT} from './battle/model.ts';
+import {COMBAT,type Point} from './battle/model.ts';
 import {clearHitFlash,flashHit} from './hit-flash.ts';
 import {units,hasGuardian,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Unit} from './engine.ts';
@@ -32,6 +32,13 @@ class Stage extends Phaser.Scene {
   views=new Map<string,ActorView>();
   stillEffects:Phaser.GameObjects.GameObject[]=[];
 
+  onReady:()=>void;
+
+  constructor(onReady:()=>void){
+    super();
+    this.onReady=onReady;
+  }
+
   preload(){
     this.load.json('frames',base+'frames.json');
     for(const [kind,moves] of Object.entries(actions))for(const move of moves){
@@ -53,6 +60,7 @@ class Stage extends Phaser.Scene {
     this.scale.on('resize',()=>{if(latest)this.paint(latest.battle,latest.frame,true,false);});
     if(latest)this.paint(latest.battle,latest.frame,true);
     this.playback();
+    this.onReady();
   }
 
   playback(){
@@ -70,6 +78,11 @@ class Stage extends Phaser.Scene {
     const animate=!playing.paused&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const scale=Math.max(.8,Math.min(width/225,height/109,2.75));
     const cues=actorFeedback(frame?.moments??[]);
+    const entrances=frame?.moments.find(moment=>moment.phase==='召唤'&&!moment.source&&!moment.action);
+    const project=(position:Point)=>({
+      x:14+(width-28)*position.x/COMBAT.width,
+      y:25+(height-53)*position.y/COMBAT.height,
+    });
     if(showEffects){
       for(const effect of this.stillEffects)effect.destroy();
       this.stillEffects=[];
@@ -83,12 +96,15 @@ class Stage extends Phaser.Scene {
         if(view&&(!animate||(!view.deathTimer&&!(view.pose==='death'&&view.sprite.anims.isPlaying))))this.removeActor(view);
         continue;
       }
-      const x=14+(width-28)*actor.position.x/COMBAT.width;
-      const y=25+(height-53)*actor.position.y/COMBAT.height;
-      view??=this.createActor(unit,x,y);
+      const {x,y}=project(actor.position);
+      if(!view){
+        const entrance=entrances?.focus.includes(unit.id)&&entrances.state.runtime.actors[unit.id];
+        const start=entrance?project(entrance.position):{x,y};
+        view=this.createActor(unit,start.x,start.y);
+      }
       view.unit=unit;
       const {sprite,ground,root}=view;
-      this.moveActor(view,x,y,animate&&!snap&&frame?.kind==='combat');
+      this.moveActor(view,x,y,animate&&!snap);
       sprite.setScale(scale).setFlipX(actor.facing===-1);
       ground.setSize(23*scale,5*scale);
       const guarding=unit.hp>0&&hasGuardian(unit.kind),marked=cue?.marked&&!cue.death;
@@ -258,8 +274,8 @@ class Stage extends Phaser.Scene {
   }
 
 }
-export function mountArena(parent:HTMLElement){
-  scene=new Stage();
+export function mountArena(parent:HTMLElement,onReady:()=>void){
+  scene=new Stage(onReady);
   game=new Phaser.Game({type:Phaser.CANVAS,parent,transparent:true,pixelArt:true,banner:false,audio:{noAudio:true},scene,scale:{width:parent.clientWidth,height:parent.clientHeight}});
   observer=new ResizeObserver(()=>{if(parent.clientWidth&&parent.clientHeight)game?.scale.resize(parent.clientWidth,parent.clientHeight);});observer.observe(parent);
 }

@@ -29,25 +29,10 @@
 @media(max-width:550px){.offers{grid-template-columns:1fr;gap:8px}.offer{display:grid;grid-template-columns:31% minmax(0,1fr)}.offer .diorama{aspect-ratio:auto;min-height:115px;border-bottom:0;border-right:1px solid #58604d}.diorama canvas{position:absolute;inset:0;object-fit:cover}.party{inset:0 0 15%}.party .lead{width:68%;height:64%}.party .companion{width:35%;height:43%;margin-left:-14%}.offer.selected .diorama{margin:0}.cardbody{padding:8px 11px}.cardhead h2{font-size:1.13rem}.cardbody p{margin:5px 0;line-height:1.35}.statline{margin-top:3px}.cardfoot{padding-top:3px}.purchase{margin-top:10px;padding:10px;gap:6px}.purchase b{font-size:.88rem}.gold,.primary{padding:10px 14px;white-space:nowrap}.loadout{grid-template-columns:1fr;margin:15px 0;gap:12px}.depart{position:sticky;bottom:0;background:#18251ff5;padding:8px 2px;z-index:2}.wheel{padding:7px}.wheel .grid{max-width:138px}.arena-wrap{min-height:175px}.feed{font-size:.9rem;padding:8px}.controls button{padding:7px 9px;font-size:.9rem}.round{font-size:1rem}.purchase span,.roster-unit,.depart span{font-size:.8rem}.results{margin-top:30px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 
-/* Keep the portrait upright as its center travels one small circle. */
-@keyframes link-orbit {
-  from { transform: translateX(-3px) rotate(0turn) translateX(3px) rotate(0turn); }
-  to   { transform: translateX(-3px) rotate(1turn) translateX(3px) rotate(-1turn); }
-}
-@keyframes summon-shake {
-  0%, 100% { transform: translateX(0); }
-  22%, 67% { transform: translateX(-3px); }
-  45%, 84% { transform: translateX(3px); }
-}
 .cell.fallen:not(.lit) .sprite { opacity: .72; filter: saturate(.5); }
-.cell[data-motion="orbit"] { --wheel-keyframe: link-orbit; }
-.cell[data-motion="shake"] {
-  --wheel-keyframe: summon-shake;
+.cell.blocked {
   border-color: #d79080;
   background: #503b39;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .cell[data-motion] .sprite { animation: var(--wheel-keyframe) var(--wheel-duration) linear 1; }
 }
 
 .offer-unit + .offer-unit { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--edge); }
@@ -100,5 +85,4 @@
 .spell-inventory { margin-top: 12px; }
 .spell-inventory h4 { margin: 0 0 8px; }
 
-.battle-paused .cell[data-motion] .sprite { animation-play-state: paused; }
 @media(max-width:550px) { .arena-wrap { min-height: 220px; } }

@@ -4,8 +4,8 @@ import {newRun,startBattle,step,commitRoll} from '../src/engine.ts';
 import {makeUnit} from '../src/battle/unit-state.ts';
 import {spawnActor,queueSkill} from '../src/battle/combat.ts';
 import {COMBAT,profile} from '../src/battle/model.ts';
-import {actorFeedback,frameMessage,playbackFrames} from '../src/playback.ts';
-import {COMBAT_TICK_MS} from '../src/timing.ts';
+import {actorFeedback,frameMessage,playbackFrames,wheelCues} from '../src/playback.ts';
+import {COMBAT_TICK_MS,EFFECT_MS} from '../src/timing.ts';
 import {resolveMovement,distance} from '../src/battle/movement.ts';
 
 function scenario(allies,enemies){
@@ -135,7 +135,7 @@ test('independent strikes and movement share one fixed playback beat',()=>{
   Object.assign(actors['1-1'],{phase:'windup',readyAt:1,targetId:'0-0'});
   const result=step(battle);
   const frames=playbackFrames(result);
-  const frame=frames.find(frame=>frame.kind==='combat');
+  const frame=frames[0];
   const attacks=frame.moments.filter(m=>m.action==='attack');
   assert.deepEqual(attacks.map(hit=>hit.source),['1-1','0-0','0-1']);
   assert.ok(frame.moments.some(m=>m.phase==='移动'));
@@ -152,9 +152,56 @@ test('independent strikes and movement share one fixed playback beat',()=>{
 
 test('quiet combat ticks keep their cadence without adding playback time per action',()=>{
   const {battle}=scenario([['guard',480,320]],[['orc',568,320]]);
-  const frames=playbackFrames(step(battle)).filter(frame=>frame.kind==='combat');
+  const frames=playbackFrames(step(battle));
   assert.equal(frames.length,COMBAT.ticksPerRoll);
   assert.ok(frames.some(frame=>frame.moments.length===0));
   assert.deepEqual(frames.map(frame=>frame.state.runtime.tick),[1,2,3,4,5,6]);
   assert.ok(frames.every(frame=>frame.duration===COMBAT_TICK_MS));
+});
+
+
+test('rolls with deployments and spells use the same uninterrupted combat cadence',()=>{
+  const run=newRun(22);
+  run.roster=['guard','guard','soldier','wizard','medic'];
+  run.spells=['surge','recruit'];
+  startBattle(run);
+  for(let i=0;i<2;i++){
+    const battle=run.battle,result=step(battle);
+    const frames=playbackFrames(result);
+    const first=frames[0];
+    assert.equal(first.state.runtime.tick,battle.runtime.tick+1);
+    assert.ok(first.moments.some(moment=>moment.phase==='停盘'));
+    assert.ok(first.moments.some(moment=>moment.phase==='移动'));
+    assert.equal(frames.length,result.ticks.length);
+    assert.equal(frames.reduce((ms,frame)=>ms+frame.duration,0),result.ticks.length*COMBAT_TICK_MS);
+    assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
+    assert.deepEqual(frames.at(-1).state,result.next);
+    if(i===0){
+      assert.ok(first.moments.some(moment=>moment.phase==='召唤'));
+      const motions=wheelCues(first).map(cue=>cue.motion);
+      assert.equal(motions[0],'draw');
+      assert.equal(motions.filter(motion=>motion==='cast').length,2);
+      assert.ok(motions.includes('orbit'));
+    }
+    commitRoll(run,result);
+  }
+});
+
+test('a wheel spell that ends the battle yields one terminal frame with its original cue',()=>{
+  const {battle}=scenario([['guard',200,320]],[['orc',800,320]]);
+  battle.spells=[{id:'spell-0',kind:'fireball'}];
+  const result=step(battle);
+  assert.equal(result.outcome,'胜利');
+  assert.equal(result.ticks.length,0);
+  const [frame]=playbackFrames(result);
+  assert.equal(playbackFrames(result).length,1);
+  assert.deepEqual(frame.state,result.next);
+  assert.deepEqual(frame.moments,result.events);
+  assert.equal(frame.duration,EFFECT_MS);
+  const cast=wheelCues(frame).find(cue=>cue.motion==='cast');
+  assert.ok(cast.moment.state.boards[0].includes('spell-0'));
+  assert.ok(!frame.state.boards[0].includes('spell-0'));
+  const defeated=actorFeedback(frame.moments).get('1-0');
+  assert.equal(defeated.hit,true);
+  assert.equal(defeated.death,true);
 });
