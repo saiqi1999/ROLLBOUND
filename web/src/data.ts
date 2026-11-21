@@ -30,7 +30,7 @@ export const encounters: {name:string; camp:string; units:Kind[]; health:number;
 ];
 export const GOLD_REWARD = 3;
 export const REFRESH_COST = 1;
-export const REQUIRED_WINS = encounters.length-1;
+export const REQUIRED_WINS = encounters.length;
 export function offer(kinds:Kind[],price:number,title=units[kinds[0]].name as string):Offer {
   return {kinds,price,title,sold:false};
 }

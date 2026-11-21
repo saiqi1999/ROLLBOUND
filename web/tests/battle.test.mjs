@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,shop,buy,refreshShop,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
+import {adjacent,newRun,shop,buy,refreshShop,removalMarkers,removeUnit,migrateExpedition,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
 import {encounters,units,GOLD_REWARD,REFRESH_COST} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
   r.battle.units=[ours,theirs].flatMap((team,side)=>team.map((kind,i)=>({id:side+'-'+i,kind,side,hp:units[kind].hp,shield:0,bonus:0,field:true})));
   return r.battle;
 }
-test('seven shops, seven battles, one payment per offer; reproducible replay',()=>{
+test('an expedition resolves each battle reproducibly and automatically stops after a nonwin',()=>{
   for(let seed=0;seed<24;seed++){
     const r=newRun(seed);
     assert.deepEqual(r.roster,['guard','guard','soldier']);
@@ -17,10 +17,106 @@ test('seven shops, seven battles, one payment per offer; reproducible replay',()
       const first=step(r.battle);assert.deepEqual(first,step(r.battle));assert.equal(first.events.some(e=>e.phase==='攻击'),false);
       assert.deepEqual(first.next,step(r.battle,'board',{captureEvents:false}).next);
       for(let j=0;r.phase==='battle'&&j<101;j++)commitRoll(r,step(r.battle));
-      assert.equal(r.phase,'result');advance(r);
+      if(r.results.at(-1)!=='胜利'){
+        assert.equal(r.phase,'end');
+        break;
+      }
+      assert.equal(r.phase,'result');
+      advance(r);
     }
-    assert.equal(r.phase,'end');assert.equal(r.results.length,7);assert.equal(r.gold,2+6*GOLD_REWARD);
+    assert.equal(r.phase,'end');
+    assert.equal(r.results.length,r.stage+1);
+    assert.ok(r.results.slice(0,-1).every(result=>result==='胜利'));
+    assert.equal(r.gold,2+r.stage*GOLD_REWARD);
   }
+});
+
+function settleFight(run,result){
+  startBattle(run);
+  const first=step(run.battle);
+  const completed={...first,outcome:result};
+  commitRoll(run,completed);
+  return completed;
+}
+
+test('wins in seven battles grant exactly three bankable markers on even stages',()=>{
+  const r=newRun(19);
+  for(let stage=0;stage<encounters.length;stage++){
+    const result=settleFight(r,'胜利');
+    commitRoll(r,result);
+    assert.equal(r.phase,'result');
+    assert.equal(r.results.length,stage+1);
+    assert.equal(removalMarkers(r),Math.floor((stage+1)/2));
+    assert.equal(removeUnit(r,0),false);
+    advance(r);
+  }
+  assert.equal(r.phase,'end');
+  assert.equal(r.gold,5+6*GOLD_REWARD);
+  assert.equal(removalMarkers(r),3);
+});
+
+test('a loss or draw on an even stage ends the run without its marker or next shop',()=>{
+  for(const result of ['落败','平局']){
+    const r=newRun(33);
+    settleFight(r,'胜利');
+    advance(r);
+    settleFight(r,result);
+    const finished=structuredClone(r);
+    advance(r);
+    assert.deepEqual(r,finished);
+    assert.equal(r.phase,'end');
+    assert.equal(removalMarkers(r),0);
+    assert.equal(r.results.at(-1),result);
+    assert.equal(r.history.length,1);
+  }
+});
+
+test('removing a specific copy preserves the surviving units’ growth after reload and recruitment',()=>{
+  const r=newRun(7);
+  assert.equal(removeUnit(r,0),false);
+  r.roster=['guard','archer','archer','king'];
+  r.attackGrowth={'0-1':2,'0-2':6,'0-3':4};
+  r.healthGrowth={'0-3':4};
+  r.stage=2;
+  r.results=['胜利','胜利'];
+  assert.equal(removeUnit(r,1.1),false);
+  assert.equal(removeUnit(r,4),false);
+  assert.equal(removalMarkers(r),1);
+  assert.equal(removeUnit(r,1),true);
+  assert.deepEqual(r.roster,['guard','archer','king']);
+  assert.equal(r.gold,5);
+  assert.equal(removalMarkers(r),0);
+  const reloaded=JSON.parse(JSON.stringify(r));
+  assert.equal(removeUnit(reloaded,1),false);
+  assert.ok(buy(reloaded,0));
+  startBattle(reloaded);
+  const [guard,archer,king,recruit]=reloaded.battle.units;
+  assert.equal(guard.bonus,0);
+  assert.equal(archer.bonus,6);
+  assert.equal(king.bonus,4);
+  assert.equal(king.hp,16);
+  assert.equal(recruit.bonus,0);
+  assert.equal(recruit.healthBonus,0);
+});
+
+test('old saves derive their bank from completed victories and expire on recorded losses',()=>{
+  const r=newRun(3);
+  delete r.removalsUsed;
+  r.stage=4;
+  r.results=Array(4).fill('胜利');
+  migrateExpedition(r);
+  assert.equal(r.phase,'shop');
+  assert.equal(removalMarkers(r),2);
+  assert.ok(removeUnit(r,0));
+  migrateExpedition(r);
+  assert.equal(removalMarkers(r),1);
+  const previousLoss={...r,removalsUsed:undefined,results:['胜利','落败','胜利','胜利']};
+  migrateExpedition(previousLoss);
+  assert.equal(previousLoss.phase,'end');
+  assert.equal(previousLoss.results.length,4);
+  const completed={...r,removalsUsed:undefined,phase:'end',results:[...Array(6).fill('胜利'),'落败']};
+  migrateExpedition(completed);
+  assert.equal(completed.legacyClearRequirement,6);
 });
 test('eight neighbors, shuffled distinct instances, former replays omit corpses',()=>{
   assert.equal([0,1,2,3,4,5,6,7,8].filter(i=>adjacent(4,i)).length,8);

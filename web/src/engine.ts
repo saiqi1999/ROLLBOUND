@@ -9,7 +9,14 @@ export type Unit = {
 export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true; corpseRules?:true};
 export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'|'blocked'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
-export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>; offers:Offer[]; refreshes?:number; legacyThirdBattle?:true; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
+export type Run = {
+  version:1; seed:number; stage:number; gold:number; roster:Kind[];
+  attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>;
+  offers:Offer[]; refreshes?:number; removalsUsed?:number;
+  legacyThirdBattle?:true; legacyClearRequirement?:number;
+  phase:'shop'|'battle'|'result'|'end'; battle:Battle|null;
+  results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[];
+};
 const copy = <T>(x:T):T => structuredClone(x);
 export function currentAttack(unit:Unit){
   return units[unit.kind].atk+unit.bonus+(unit.battleAttackBonus??0)+(unit.roundAttackBonus??0);
@@ -41,7 +48,7 @@ export function shop(seed:number,stage:number,refreshes=0) {
     rng(s)<.5?royal():offer(['page','page'],2,'纸甲侍从小队')];
 }
 export function newRun(seed:number):Run {
-  return {version:1,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),refreshes:0,phase:'shop',battle:null,results:[],log:[],history:[]};
+  return {version:1,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
 }
 export function buy(run:Run,index:number) {
   const o=run.offers[index];
@@ -53,6 +60,30 @@ export function refreshShop(run:Run){
   run.gold-=REFRESH_COST;
   run.refreshes=(run.refreshes??0)+1;
   run.offers=shop(run.seed,run.stage,run.refreshes);
+  return true;
+}
+export function earnedRemovalMarker(stage:number,result:Outcome|undefined){
+  return (stage+1)%2===0&&result==='胜利';
+}
+export function removalMarkers(run:Run){
+  const earned=run.results.filter((result,stage)=>earnedRemovalMarker(stage,result)).length;
+  return Math.max(0,earned-(run.removalsUsed??0));
+}
+function shiftGrowth(growth:Record<string,number>,removed:number,length:number){
+  const shifted:Record<string,number>={};
+  for(let index=0;index<length;index++){
+    const prior=growth['0-'+(index<removed?index:index+1)];
+    if(prior!==undefined)shifted['0-'+index]=prior;
+  }
+  return shifted;
+}
+export function removeUnit(run:Run,index:number){
+  if(run.phase!=='shop'||!Number.isInteger(index)||index<0||index>=run.roster.length||!removalMarkers(run))return false;
+  run.roster.splice(index,1);
+  // Battle IDs are derived from roster position. Keep both bonuses attached to their owners.
+  if(run.attackGrowth)run.attackGrowth=shiftGrowth(run.attackGrowth,index,run.roster.length);
+  if(run.healthGrowth)run.healthGrowth=shiftGrowth(run.healthGrowth,index,run.roster.length);
+  run.removalsUsed=(run.removalsUsed??0)+1;
   return true;
 }
 export function startBattle(r:Run){
@@ -71,6 +102,16 @@ export function advance(r:Run) {
   if(r.phase!=='result')return;
   if(r.stage===encounters.length-1){r.phase='end';return;}
   r.stage++;r.gold+=GOLD_REWARD;r.refreshes=0;r.offers=shop(r.seed,r.stage);r.battle=null;r.history=[];r.phase='shop';
+}
+export function migrateExpedition(run:Run){
+  if(run.removalsUsed!==undefined)return;
+  run.removalsUsed=0;
+  // Preserve the result of expeditions already completed under the earlier scoring rules.
+  if(run.phase==='end'||run.results.length===encounters.length){
+    run.legacyClearRequirement=run.results.length<encounters.length?2:encounters.length-1;
+  }else if(run.results.some(result=>result!=='胜利')){
+    run.phase='end';
+  }
 }
 export function adjacent(a:number,b:number) {
   return a>=0&&b>=0&&a!==b&&Math.max(Math.abs(a%3-b%3),Math.abs(Math.floor(a/3)-Math.floor(b/3)))===1;
@@ -275,11 +316,13 @@ export function commitRoll(r:Run,result:ReturnType<typeof step>){
   if(r.phase!=='battle'||!r.battle||r.battle.round+1!==result.next.round)return;
   r.history.push({...r.battle,order:'board'});r.battle=result.next;r.log.push(...result.events.map(e=>'第'+result.next.round+'摇 · '+e.text));
   if(result.next.lastingGrowth){
-    // The roster only appends units, so ally IDs stay stable throughout the run.
     r.attackGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.bonus>0).map(u=>[u.id,u.bonus]));
   }
   if(result.next.corpseRules){
     r.healthGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.healthBonus).map(u=>[u.id,u.healthBonus!]));
   }
-  if(result.outcome){r.results.push(result.outcome);r.phase='result';}
+  if(result.outcome){
+    r.results.push(result.outcome);
+    r.phase=result.outcome==='胜利'?'result':'end';
+  }
 }

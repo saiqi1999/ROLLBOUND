@@ -27,6 +27,12 @@ function playFight(run) {
   return run.results.at(-1) === '胜利';
 }
 
+function advanceTrial(run) {
+  // Continue even failed trials to measure each encounter without survivor selection.
+  run.phase = 'result';
+  advance(run);
+}
+
 export function compare(runs, limit = runs.length, keepResults = false) {
   let recruited = 0, skipped = 0, savedByRecruiting = 0;
   for (let index = 0; index < limit; index++) {
@@ -39,7 +45,7 @@ export function compare(runs, limit = runs.length, keepResults = false) {
     skipped += Number(withoutRecruit);
     savedByRecruiting += Number(withRecruit && !withoutRecruit);
     if (keepResults) {
-      advance(run);
+      advanceTrial(run);
       runs[index] = run;
     }
   }
@@ -55,7 +61,7 @@ function report(count, offset) {
     let noRecruitWins = 0;
     for (const run of noRecruits) {
       noRecruitWins += Number(playFight(run));
-      advance(run);
+      advanceTrial(run);
     }
     return {
       '关卡':index+1, '对手':name, '人数':units.length, '每敌增益':attack+'/'+health,
