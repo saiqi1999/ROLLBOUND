@@ -10,6 +10,7 @@ import {resolveMovement,distance} from '../src/battle/movement.ts';
 
 function scenario(allies,enemies){
   const run=newRun(365);
+  run.roster=allies.map(([kind])=>kind);
   startBattle(run);
   const battle=run.battle;
   battle.round=1;

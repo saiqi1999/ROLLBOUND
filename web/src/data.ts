@@ -38,16 +38,15 @@ export type Offer = { title:string; kinds:Kind[]; price:number; sold:boolean; sp
 export function spellOffer(spell:SpellKind):Offer{
   return {title:spells[spell].name,kinds:[],price:spells[spell].price,sold:false,spell};
 }
-export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number}[] = [
-  {name:'边境巡队',camp:'边境',units:['orc','orc','bone'],health:-2,attack:0},
-  {name:'灰骨哨所',camp:'哨所',units:['orc','orc','bone','bone'],health:-1,attack:1},
-  {name:'裂牙先锋',camp:'裂牙',units:['orc','orc','orc','bone','bone'],health:1,attack:1},
-  {name:'黑铁前线',camp:'黑铁',units:['axeman','swordsman','soldier','guard','lancer','medic'],health:-1,attack:0},
-  {name:'荒原围军',camp:'荒原',units:['orc','orc','orc','orc','bone','bone','bone'],health:5,attack:2},
-  {name:'铁誓军团',camp:'铁誓',units:['templar','axeman','swordsman','soldier','lancer','medic','archer','archer'],health:-1,attack:0},
-  {name:'暮色王庭',camp:'王庭',units:['king','king','page','page','page','orc','orc','bone','bone'],health:10,attack:2}
+export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number; gold:number}[] = [
+  {name:'边境巡队',camp:'边境',units:['orc','orc','bone'],health:-2,attack:0,gold:10},
+  {name:'灰骨哨所',camp:'哨所',units:['orc','orc','bone','bone'],health:-1,attack:1,gold:4},
+  {name:'裂牙先锋',camp:'裂牙',units:['orc','orc','orc','bone','bone'],health:1,attack:1,gold:5},
+  {name:'黑铁前线',camp:'黑铁',units:['axeman','swordsman','soldier','guard','lancer','medic'],health:-1,attack:0,gold:6},
+  {name:'荒原围军',camp:'荒原',units:['orc','orc','orc','orc','bone','bone','bone'],health:5,attack:2,gold:7},
+  {name:'铁誓军团',camp:'铁誓',units:['templar','axeman','swordsman','soldier','lancer','medic','archer','archer'],health:-1,attack:0,gold:8},
+  {name:'暮色王庭',camp:'王庭',units:['king','king','page','page','page','orc','orc','bone','bone'],health:10,attack:2,gold:9}
 ];
-export const GOLD_REWARD = 3;
 export const REFRESH_COST = 1;
 export const REQUIRED_WINS = encounters.length;
 export function unitOffer(kind:Kind):Offer {

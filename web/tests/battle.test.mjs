@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,shop,buy,refreshShop,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,maxHealth,currentAttack} from '../src/engine.ts';
+import {adjacent,newRun,loadRun,canStartBattle,shop,buy,refreshShop,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,maxHealth,currentAttack} from '../src/engine.ts';
 import {spawnActor} from '../src/battle/combat.ts';
-import {encounters,units,unitKinds,spells,spellOffer,GOLD_REWARD,REFRESH_COST} from '../src/data.ts';
+import {encounters,units,unitKinds,spells,spellOffer,REFRESH_COST} from '../src/data.ts';
 function field(ours,theirs){
-  const r=newRun(42);startBattle(r);
+  const r=newRun(42);r.roster=ours.length?[...ours]:['guard'];startBattle(r);
   r.battle.units=[ours,theirs].flatMap((team,side)=>team.map((kind,i)=>({id:side+'-'+i,kind,side,hp:units[kind].hp,shield:0,bonus:0,healthBonus:0,field:true})));
   r.battle.units.forEach(unit=>spawnActor(r.battle,unit));
   return r.battle;
@@ -28,9 +28,11 @@ function place(battle,positions){
 test('an expedition resolves each battle reproducibly and automatically stops after a nonwin',()=>{
   for(let seed=0;seed<24;seed++){
     const r=newRun(seed);
-    const openingPrice=r.offers[0].price;
-    assert.deepEqual(r.roster,['guard','guard','soldier']);
-    assert.ok(buy(r,0));assert.equal(buy(r,0),false);assert.equal(r.roster.length,4);
+    assert.deepEqual(r.roster,[]);
+    const openingGold=r.gold;
+    assert.ok(buy(r,0));assert.equal(buy(r,0),false);assert.equal(r.roster.length,1);
+    for(let offer=1;offer<3;offer++)buy(r,offer);
+    const openingSpend=openingGold-r.gold;
     for(let i=0;i<7;i++){
       assert.equal(r.stage,i);startBattle(r);
       const first=step(r.battle);assert.deepEqual(first,step(r.battle));assert.ok(first.events.find(e=>e.phase==='召唤'));
@@ -46,7 +48,7 @@ test('an expedition resolves each battle reproducibly and automatically stops af
     assert.equal(r.phase,'end');
     assert.equal(r.results.length,r.stage+1);
     assert.ok(r.results.slice(0,-1).every(result=>result==='胜利'));
-    assert.equal(r.gold,5-openingPrice+r.stage*GOLD_REWARD);
+    assert.equal(r.gold,encounters.slice(0,r.stage+1).reduce((sum,stage)=>sum+stage.gold,0)-openingSpend);
   }
 });
 
@@ -60,7 +62,13 @@ function settleFight(run,result){
 
 test('wins in seven battles grant exactly three bankable markers on even stages',()=>{
   const r=newRun(19);
+  const price=r.offers[0].price;
+  assert.ok(buy(r,0));
+  const goldPerShop=[10,4,5,6,7,8,9];
+  let careerGold=-price;
   for(let stage=0;stage<encounters.length;stage++){
+    careerGold+=goldPerShop[stage];
+    assert.equal(r.gold,careerGold);
     const result=settleFight(r,'胜利');
     commitRoll(r,result);
     assert.equal(r.phase,'result');
@@ -70,13 +78,14 @@ test('wins in seven battles grant exactly three bankable markers on even stages'
     advance(r);
   }
   assert.equal(r.phase,'end');
-  assert.equal(r.gold,5+6*GOLD_REWARD);
+  assert.equal(r.gold,49-price);
   assert.equal(removalMarkers(r),3);
 });
 
 test('a loss or draw on an even stage ends the run without its marker or next shop',()=>{
   for(const result of ['落败','平局']){
     const r=newRun(33);
+    assert.ok(buy(r,0));
     settleFight(r,'胜利');
     advance(r);
     settleFight(r,result);
@@ -103,7 +112,7 @@ test('removing a specific copy preserves the surviving units’ growth after rel
   assert.equal(removalMarkers(r),1);
   assert.equal(removeUnit(r,1),true);
   assert.deepEqual(r.roster,['guard','archer','king']);
-  assert.equal(r.gold,5);
+  assert.equal(r.gold,10);
   assert.equal(removalMarkers(r),0);
   const reloaded=JSON.parse(JSON.stringify(r));
   assert.equal(removeUnit(reloaded,1),false);
@@ -116,6 +125,23 @@ test('removing a specific copy preserves the surviving units’ growth after rel
   assert.equal(king.hp,16);
   assert.equal(recruit.bonus,0);
   assert.equal(recruit.healthBonus,0);
+});
+
+test('an opening save keeps purchased units and spending when the starter grant changes',()=>{
+  const previous={...newRun(17),version:2,roster:['guard','guard','soldier','archer'],gold:2,spells:['surge']};
+  const migrated=loadRun(previous);
+  assert.equal(migrated.version,3);
+  assert.deepEqual(migrated.roster,['archer']);
+  assert.equal(migrated.gold,7);
+  assert.deepEqual(migrated.spells,['surge']);
+  assert.deepEqual(loadRun(migrated),migrated);
+  assert.equal(previous.roster.length,4);
+  const empty=loadRun({...previous,roster:previous.roster.slice(0,3),gold:5});
+  assert.deepEqual(empty.roster,[]);
+  assert.equal(empty.gold,10);
+  assert.equal(canStartBattle(empty),false);
+  const later={...previous,stage:2,gold:3};
+  assert.deepEqual(loadRun(later),{...later,version:3});
 });
 
 test('eight neighbors and distinct wheel draws including corpses',()=>{
@@ -213,7 +239,7 @@ test('a guard gains two shield in its attack event, only for itself',()=>{
 
 test('growth follows individual allies across battles, including allies that fell',()=>{
   const r=newRun(23);
-  r.roster.push('archer','archer','king');
+  r.roster=['guard','guard','soldier','archer','archer','king'];
   startBattle(r);
   const next=structuredClone(r.battle);
   next.round=1;
@@ -532,16 +558,24 @@ test('human stat buffs and revive usage reset between fights',()=>{
 test('shop spell purchases cost gold and enter the next wheel instead of the unit roster',()=>{
   const r=newRun(11);
   r.offers[3]=spellOffer('recruit');
+  assert.equal(canStartBattle(r),false);
+  assert.equal(startBattle(r),false);
+  assert.equal(r.battle,null);
   assert.equal(buy(r,3),true);
   assert.equal(buy(r,3),false);
-  assert.equal(r.gold,3);
-  assert.deepEqual(r.roster,['guard','guard','soldier']);
+  assert.equal(r.gold,8);
+  assert.deepEqual(r.roster,[]);
   assert.deepEqual(r.spells,['recruit']);
   assert.equal(refreshShop(r),true);
   assert.equal(r.offers.filter(o=>o.spell).length,1);
   const resumed=JSON.parse(JSON.stringify(r));
-  startBattle(resumed);
-  assert.equal(resumed.battle.units.filter(u=>u.side===0).length,3);
+  assert.equal(canStartBattle(resumed),false);
+  assert.equal(startBattle(resumed),false);
+  assert.equal(resumed.phase,'shop');
+  assert.ok(buy(resumed,0));
+  assert.ok(canStartBattle(resumed));
+  assert.ok(startBattle(resumed));
+  assert.equal(resumed.battle.units.filter(u=>u.side===0).length,1);
   assert.deepEqual(resumed.battle.spells,[{id:'spell-0',kind:'recruit'}]);
 });
 
@@ -648,6 +682,7 @@ test('spells without targets are spent, while an undrawn copy carries into the n
 
 test('summoning circles each recruit one human with permanent growth and wait until a future roll',()=>{
   const r=newRun(31);
+  r.roster=['guard','guard','soldier'];
   r.spells=['recruit','recruit'];
   startBattle(r);
   const checkpoint=r.battle;
@@ -715,6 +750,7 @@ test('a wizard buffs living adjacent allies of any race on entry before same-rol
 
 test('cast history grows future wizard entries across reload, recruitment and battles',()=>{
   const r=newRun(15);
+  r.roster=['guard','guard','soldier'];
   r.spells=['surge','fireball','recruit'];
   startBattle(r);
   const first=step(r.battle);

@@ -70,4 +70,4 @@ sequenceDiagram
 | 7 暮色王庭 | 41.5% | 48.3% | 37.6% |
 | 七战全胜 | 24.0% | 22.9% | — |
 
-复现命令为 `cd web && node scripts/simulate-difficulty.mjs 2000 100000`。在这组样本里，全程跳过招募的两版通关率均为 0%。
+在战斗迁移初版提交 `d600357` 上，复现命令为 `cd web && node scripts/simulate-difficulty.mjs 2000 100000`。在这组样本里，全程跳过招募的两版通关率均为 0%。

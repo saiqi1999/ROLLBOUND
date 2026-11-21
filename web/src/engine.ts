@@ -1,4 +1,4 @@
-import {unitKinds,spellKinds,spellOffer,encounters,unitOffer,GOLD_REWARD,REFRESH_COST,type Kind,type Offer,type SpellKind} from './data.ts';
+import {unitKinds,spellKinds,spellOffer,encounters,unitOffer,REFRESH_COST,type Kind,type Offer,type SpellKind} from './data.ts';
 import {advanceCombatTick,queueSkill,spawnActor} from './battle/combat.ts';
 import {createEffects,label} from './battle/effects.ts';
 import {COMBAT,createCombat,type CombatRuntime} from './battle/model.ts';
@@ -30,7 +30,7 @@ export type RecordMoment = (
 export type CombatTick = {state:Battle;from:number;until:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {
-  version:2;seed:number;stage:number;gold:number;roster:Kind[];spells:SpellKind[];spellCasts:number;
+  version:3;seed:number;stage:number;gold:number;roster:Kind[];spells:SpellKind[];spellCasts:number;
   attackGrowth:Record<string,number>;healthGrowth:Record<string,number>;
   offers:Offer[];refreshes:number;removalsUsed:number;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
@@ -44,7 +44,20 @@ export function shop(seed:number,stage:number,refreshes=0) {
   return offers;
 }
 export function newRun(seed:number):Run {
-  return {version:2,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),spells:[],spellCasts:0,attackGrowth:{},healthGrowth:{},refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
+  return {version:3,seed,stage:0,gold:encounters[0].gold,roster:[],offers:shop(seed,0),spells:[],spellCasts:0,attackGrowth:{},healthGrowth:{},refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
+}
+export type SavedRun = Run|(Omit<Run,'version'>&{version:2});
+
+export function loadRun(saved:SavedRun):Run{
+  if(saved.version===3)return saved;
+  if(saved.phase!=='shop'||saved.stage!==0)return {...saved,version:3};
+  const starters=['guard','guard','soldier'];
+  const roster=starters.every((kind,i)=>saved.roster[i]===kind)?saved.roster.slice(starters.length):saved.roster;
+  return {...saved,version:3,roster,gold:saved.gold+encounters[0].gold-5};
+}
+
+export function canStartBattle(run:Run){
+  return run.phase==='shop'&&(run.stage>0||run.roster.length>0);
 }
 export function buy(run:Run,index:number) {
   const o=run.offers[index];
@@ -87,7 +100,7 @@ export function removeUnit(run:Run,index:number){
   return true;
 }
 export function startBattle(r:Run){
-  if(r.phase!=='shop')return;
+  if(!canStartBattle(r))return false;
   const encounter=encounters[r.stage];
   const allies=r.roster.map((kind,index)=>makeUnit(kind,0,index,r.attackGrowth['0-'+index]??0,r.healthGrowth['0-'+index]??0));
   const enemies=encounter.units.map((kind,index)=>makeUnit(kind,1,index,encounter.attack,encounter.health));
@@ -98,11 +111,12 @@ export function startBattle(r:Run){
     boards:[Array(WHEEL_SIZE).fill(null),Array(WHEEL_SIZE).fill(null)],runtime:createCombat(seed),
   };
   r.history=[];r.log=[];r.phase='battle';
+  return true;
 }
 export function advance(r:Run) {
   if(r.phase!=='result')return;
   if(r.stage===encounters.length-1){r.phase='end';return;}
-  r.stage++;r.gold+=GOLD_REWARD;r.refreshes=0;r.offers=shop(r.seed,r.stage);r.battle=null;r.history=[];r.phase='shop';
+  r.stage++;r.gold+=encounters[r.stage].gold;r.refreshes=0;r.offers=shop(r.seed,r.stage);r.battle=null;r.history=[];r.phase='shop';
 }
 
 function fieldOutcome(battle:Battle):Outcome|undefined{

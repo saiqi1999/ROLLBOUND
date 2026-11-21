@@ -1,20 +1,20 @@
 import './style.css';
 import {COMBAT_TICK_MS,WHEEL_MOTION,type WheelMotion} from './timing.ts';
 import {frameMessage,playbackFrames,wheelCues,type PlaybackFrame} from './playback.ts';
-import {units,spells,encounters,races,hasGuardian,wizardEntryGain,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
-import {newRun,shop,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Battle,type Run} from './engine.ts';
+import {units,spells,encounters,races,hasGuardian,wizardEntryGain,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
+import {newRun,loadRun,canStartBattle,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Battle,type Run,type SavedRun} from './engine.ts';
 import {WHEEL_WIDTH} from './battle/wheel.ts';
 import {scenery} from './landscape.ts';
 import type * as Arena from './arena.ts';
-const key='rollbound.trial.v2',base=import.meta.env.BASE_URL+'art/';
+const key='rollbound.trial.v3',base=import.meta.env.BASE_URL+'art/';
 const app=document.querySelector<HTMLElement>('#app')!, dialog=document.querySelector<HTMLDialogElement>('#detail')!;
 app.style.setProperty('--wheel-width',String(WHEEL_WIDTH));
 const getSeed=()=>crypto.getRandomValues(new Uint32Array(1))[0];
 function read():Run{
   try{
-    const saved:Run|null=JSON.parse(localStorage.getItem(key)??'null');
-    if(saved?.version===2&&Array.isArray(saved.roster)&&saved.roster.every(k=>Object.hasOwn(units,k))&&
-       encounters[saved.stage]&&Array.isArray(saved.history))return saved;
+    const saved:SavedRun|null=JSON.parse(localStorage.getItem(key)??localStorage.getItem('rollbound.trial.v2')??'null');
+    if((saved?.version===2||saved?.version===3)&&Array.isArray(saved.roster)&&saved.roster.every(k=>Object.hasOwn(units,k))&&
+       encounters[saved.stage]&&Array.isArray(saved.history))return loadRun(saved);
   }catch{}
   return newRun(getSeed());
 }
@@ -56,7 +56,7 @@ document.addEventListener('unit-info',((e:CustomEvent)=>{
   const v=e.detail;
   modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p>'+wizardPreview(v.kind)+'<p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
 }) as EventListener);
-const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。进下一间商店时获得 '+GOLD_REWARD+' 金币，每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。摇到候补单位时尝试召唤。已在场的单位会自行走位和普攻，轮盘相邻决定技能。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。单位优先随机锁定一名守护敌人，进入射程后出手。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
+const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。各店依次发放 '+encounters.map(stage=>stage.gold).join('、')+' 金币，余款带入下一店。开局阵容为空，首战前至少招募一枚单位。每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。摇到候补单位时尝试召唤。已在场的单位会自行走位和普攻，轮盘相邻决定技能。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。单位优先随机锁定一名守护敌人，进入射程后出手。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
 function rosterStats(kind:Kind,index:number,growth?:Pick<Run,'attackGrowth'|'healthGrowth'>){
   const id='0-'+index;
   return {attack:units[kind].atk+(growth?.attackGrowth?.[id]??0),health:units[kind].hp+(growth?.healthGrowth?.[id]??0)};
@@ -96,6 +96,15 @@ function paintShopPurchases(){
     button.setAttribute('aria-label',offer.sold?label+' '+offer.title:
       (state==='short'?'金币不足，':'')+action+' '+offer.title+' · '+offer.price+' 金币');
   }
+  const ready=canStartBattle(run);
+  const affordableRecruit=run.offers.some(offer=>!offer.spell&&!offer.sold&&offer.price<=run.gold);
+  const stranded=!ready&&!affordableRecruit&&run.gold<=REFRESH_COST;
+  const fight=app.querySelector<HTMLButtonElement>('[data-act="fight"]')!;
+  fight.disabled=!ready;
+  fight.hidden=stranded;
+  app.querySelector<HTMLButtonElement>('[data-act="reset"]')!.hidden=!stranded;
+  app.querySelector('#departure-note')!.textContent=stranded?'余款不足以招募，可重新开局。':
+    !ready?'招募至少 1 枚单位后开战。':run.stage<encounters.length-1?'剩余金币带入下一间商店':'最后一间商店';
   app.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3>'+
     '<div class="roster">'+team(run.roster,run)+'</div>'+spellInventory();
 }
@@ -124,9 +133,9 @@ function shopView(){
     ' 金币</button><button class="quiet removal-entry" data-act="manage-removal">移除标记 · '+removalMarkers(run)+'</button></div></div>'+
     '<div class="offers">'+offers+'</div><p id="purchase-status" class="sr-only" role="status"></p>'+
     '<div class="loadout"><div id="shop-roster"></div><div><h3>下战对手 <small>'+encounter.name+'</small></h3>'+
-    '<div class="roster enemy">'+team(encounter.units,undefined,encounter)+'</div></div></div><div class="depart"><span>'+
-    (run.stage<encounters.length-1?'剩余金币带入下一间商店':'最后一间商店')+
-    '</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
+    '<div class="roster enemy">'+team(encounter.units,undefined,encounter)+'</div></div></div>'+
+    '<div class="depart"><span id="departure-note"></span><button class="primary" data-act="fight" aria-describedby="departure-note">开始第 '+
+    (run.stage+1)+' 战</button><button class="primary" data-act="reset" hidden>重新开局</button></div></section>';
   paintShopPurchases();
   for(const canvas of app.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(canvas,canvas.dataset.scene!);
 }
@@ -344,7 +353,7 @@ function results(){
   const reward=nextShop&&earnedRemovalMarker(run.stage,result)?'<p class="removal-reward">获得 1 个移除标记 · 当前持有 '+removalMarkers(run)+' 个</p>':'';
   app.innerHTML=header()+'<section class="results"><div class="kicker">第 '+(lastStage+1)+' 战 · '+opponentName(lastStage)+'</div><h1>'+title+'</h1><p>'+summary+'</p>'
     +'<div class="results-team">'+counts(run.roster).map(([k])=>art(k)).join('')+'</div><div class="score">'+run.results.map((v,i)=>'<div><small>'+opponentName(i)+'</small><b>'+v+'</b></div>').join('')+'</div>'
-    +reward+review+'<button class="primary" data-act="'+(end?'reset':'advance')+'">'+(end?'再来一局':nextShop?'进入下一间商店 · +'+GOLD_REWARD+' 金币':'查看本局总结')+'</button></section>';
+    +reward+review+'<button class="primary" data-act="'+(end?'reset':'advance')+'">'+(end?'再来一局':nextShop?'进入下一间商店 · +'+encounters[run.stage+1].gold+' 金币':'查看本局总结')+'</button></section>';
 }
 function render(){
   if(run.phase==='shop'){
@@ -408,7 +417,7 @@ app.addEventListener('click',event=>{
         }
       }
       break;
-    case 'fight':startBattle(run);paused=false;save();render();break;
+    case 'fight':if(startBattle(run)){paused=false;save();render();}break;
     case 'pause':togglePause();break;
     case 'step':paused=true;stopTimer();tick();break;
     case 'speed':stopTimer();speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
