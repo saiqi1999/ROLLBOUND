@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adjacent,newRun,shop,buy,refreshShop,removalMarkers,removeUnit,migrateExpedition,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
-import {encounters,units,GOLD_REWARD,REFRESH_COST} from '../src/data.ts';
+import {encounters,units,unitKinds,spells,spellOffer,GOLD_REWARD,REFRESH_COST} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
   r.battle.units=[ours,theirs].flatMap((team,side)=>team.map((kind,i)=>({id:side+'-'+i,kind,side,hp:units[kind].hp,shield:0,bonus:0,field:true})));
@@ -10,6 +10,7 @@ function field(ours,theirs){
 test('an expedition resolves each battle reproducibly and automatically stops after a nonwin',()=>{
   for(let seed=0;seed<24;seed++){
     const r=newRun(seed);
+    const openingPrice=r.offers[0].price;
     assert.deepEqual(r.roster,['guard','guard','soldier']);
     assert.ok(buy(r,0));assert.equal(buy(r,0),false);assert.equal(r.roster.length,4);
     for(let i=0;i<7;i++){
@@ -27,7 +28,7 @@ test('an expedition resolves each battle reproducibly and automatically stops af
     assert.equal(r.phase,'end');
     assert.equal(r.results.length,r.stage+1);
     assert.ok(r.results.slice(0,-1).every(result=>result==='胜利'));
-    assert.equal(r.gold,2+r.stage*GOLD_REWARD);
+    assert.equal(r.gold,5-openingPrice+r.stage*GOLD_REWARD);
   }
 });
 
@@ -363,22 +364,32 @@ test('the first adjacent king consumes every shared corpse once and grows before
   assert.fail('missing two kings with shared neighbors');
 });
 
-test('all human recruits are offered individually',()=>{
-  const available=new Set();
-  for(let seed=0;seed<100;seed++){
-    for(let stage=0;stage<7;stage++){
-      for(const listing of shop(seed,stage)){
-        if(!listing.kinds.some(k=>units[k].race==='human'))continue;
-        assert.equal(listing.kinds.length,1);
-        available.add(listing.kinds[0]);
-      }
+test('every shop including the opening has three different single units and one random spell',()=>{
+  const available=new Set(),seenSpells=new Set();
+  for(let seed=0;seed<120;seed++){
+    for(const refresh of [0,1]){
+      const offers=shop(seed,0,refresh);
+      assert.equal(offers.length,4);
+      const stock=offers.slice(0,3).map(offer=>{
+        assert.equal(offer.spell,undefined);
+        assert.equal(offer.kinds.length,1);
+        return offer.kinds[0];
+      });
+      assert.equal(new Set(stock).size,3);
+      stock.forEach(kind=>available.add(kind));
+      assert.equal(offers[3].price,spells[offers[3].spell].price);
+      assert.deepEqual(offers[3].kinds,[]);
+      seenSpells.add(offers[3].spell);
+      assert.deepEqual(shop(seed,0,refresh),offers);
     }
   }
-  assert.deepEqual(available,new Set(['archer','swordsman','lancer','medic','axeman','templar','guard','soldier']));
+  assert.deepEqual(available,new Set(unitKinds));
+  assert.deepEqual(seenSpells,new Set(Object.keys(spells)));
 });
 
 test('refresh costs one gold, restocks, survives reload, and resets at the next shop',()=>{
   const r=newRun(9);
+  r.gold=r.offers[0].price+2;
   assert.ok(buy(r,0));
   const roster=[...r.roster],before=structuredClone(r.offers);
   assert.ok(refreshShop(r));
@@ -534,20 +545,18 @@ test('human stat buffs and revive usage reset between fights',()=>{
 
 test('shop spell purchases cost gold and enter the next wheel instead of the unit roster',()=>{
   const r=newRun(11);
-  const surgeIndex=r.offers.findIndex(o=>o.spell==='surge');
-  const fireballIndex=r.offers.findIndex(o=>o.spell==='fireball');
-  assert.equal(buy(r,surgeIndex),true);
-  assert.equal(buy(r,surgeIndex),false);
-  assert.equal(buy(r,fireballIndex),false);
-  assert.equal(r.gold,2);
+  r.offers[3]=spellOffer('recruit');
+  assert.equal(buy(r,3),true);
+  assert.equal(buy(r,3),false);
+  assert.equal(r.gold,3);
   assert.deepEqual(r.roster,['guard','guard','soldier']);
-  assert.deepEqual(r.spells,['surge']);
+  assert.deepEqual(r.spells,['recruit']);
   assert.equal(refreshShop(r),true);
-  assert.equal(r.offers.filter(o=>o.spell).length,2);
+  assert.equal(r.offers.filter(o=>o.spell).length,1);
   const resumed=JSON.parse(JSON.stringify(r));
   startBattle(resumed);
   assert.equal(resumed.battle.units.filter(u=>u.side===0).length,3);
-  assert.deepEqual(resumed.battle.spells,[{id:'spell-0',kind:'surge'}]);
+  assert.deepEqual(resumed.battle.spells,[{id:'spell-0',kind:'recruit'}]);
 });
 
 test('a drawn surge grows all live adjacent allies including diagonals and is spent across battles',()=>{
@@ -648,4 +657,43 @@ test('spells without targets are spent, while an undrawn copy carries into the n
     return;
   }
   assert.fail('No roll with one undrawn copy');
+});
+
+test('summoning circles each recruit one human with permanent growth and wait until a future roll',()=>{
+  const r=newRun(31);
+  r.spells=['recruit','recruit'];
+  startBattle(r);
+  const checkpoint=r.battle;
+  const first=step(checkpoint);
+  const created=first.next.units.filter(u=>['0-3','0-4'].includes(u.id));
+  assert.equal(created.length,2);
+  assert.equal(first.events.filter(e=>e.spell==='recruit').length,2);
+  assert.deepEqual(first.next.spells,[]);
+  assert.deepEqual(step(checkpoint),first);
+  for(const unit of created){
+    assert.equal(units[unit.kind].race,'human');
+    assert.equal(currentAttack(unit),units[unit.kind].atk+3);
+    assert.equal(unit.hp,units[unit.kind].hp+3);
+    assert.equal(maxHealth(unit),unit.hp);
+    assert.equal(unit.field,false);
+    assert.ok(!first.next.boards[0].includes(unit.id));
+  }
+  commitRoll(r,first);
+  commitRoll(r,first);
+  assert.deepEqual(r.roster.slice(3),created.map(u=>u.kind));
+  const reloaded=JSON.parse(JSON.stringify(r));
+  const next=step(reloaded.battle);
+  for(const unit of created){
+    assert.ok(next.events.some(e=>e.phase==='召唤'&&e.focus.includes(unit.id)));
+  }
+  commitRoll(reloaded,{...next,outcome:'胜利'});
+  advance(reloaded);
+  startBattle(reloaded);
+  for(const recruit of created){
+    const unit=reloaded.battle.units.find(u=>u.id===recruit.id);
+    assert.equal(unit.kind,recruit.kind);
+    assert.equal(unit.bonus,3);
+    assert.equal(unit.healthBonus,3);
+  }
+  assert.ok(!step(reloaded.battle).events.some(e=>e.spell==='recruit'));
 });

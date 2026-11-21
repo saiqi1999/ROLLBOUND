@@ -7,7 +7,7 @@ const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
   Object.keys(units).map(k=>[k,k==='medic'?['idle','attack','death','heal']:['idle','attack','death']])
 ) as Record<Kind,string[]>;
-const effectStills={heal:1,empower:1,surge:3,fireball:0} as const;
+const effectStills={heal:1,empower:1,surge:3,fireball:0,recruit:3} as const;
 const SPELL_MS=400;
 let scene:Stage|undefined, game:Phaser.Game|undefined, observer:ResizeObserver|undefined, latest:{b:Battle,e:Moment|undefined,speed:number}|undefined;
 class Stage extends Phaser.Scene {
@@ -56,6 +56,13 @@ class Stage extends Phaser.Scene {
       const pos=positions.get(u.id)!;
       this.actor(u,pos.x,pos.y,e,w,h,combatants.filter(x=>x.side===u.side).length,speed);
     }
+    if(e?.spell==='recruit')this.playEffect('recruit',w*.25,h*.46,Math.max(1,Math.min(w/135,3.6)),speed);
+  }
+  playEffect(effect:keyof typeof effectStills,x:number,y:number,scale:number,speed:number){
+    const key='fx-'+effect;
+    const sprite=this.add.sprite(x,y,key).setOrigin(.5,.60).setScale(scale);
+    if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)sprite.setFrame(effectStills[effect]);
+    else sprite.play({key,duration:SPELL_MS/speed}).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>sprite.destroy());
   }
   actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number,speed:number){
     const active=e?.focus.includes(u.id);
@@ -83,12 +90,7 @@ class Stage extends Phaser.Scene {
     if(hit)flashHit(sprite,96/speed);
     const effect=e?.spell??(action==='heal'||action==='empower'?action:undefined);
     const receivesEffect=e?.target===u.id||e?.valueTargets?.includes(u.id);
-    if(effect&&receivesEffect){
-      const fxKey='fx-'+effect;
-      const fx=this.add.sprite(x,y+9,fxKey).setOrigin(.5,.60).setScale(scale);
-      if(reducedMotion)fx.setFrame(effectStills[effect]);
-      else fx.play({key:fxKey,duration:SPELL_MS/speed}).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>fx.destroy());
-    }
+    if(effect&&receivesEffect)this.playEffect(effect,x,y+9,scale,speed);
     const attack=currentAttack(u);
     this.drawStats(u,attack,x,y+14,.38*w/(count>6?3:2));
     if(active&&e?.value&&(e.valueTargets?e.valueTargets.includes(u.id):hit||e.phase!=='攻击')){

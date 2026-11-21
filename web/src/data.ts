@@ -17,17 +17,24 @@ export const units = {
   templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'每场战斗首次阵亡时，满血复活并使所有友方在场人类获得+1/+1。' }
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
+export const unitKinds=Object.keys(units) as Kind[];
+export const humanKinds=unitKinds.filter(kind=>units[kind].race==='human');
+const unitPrices:Record<Kind,number>={
+  guard:2,archer:3,medic:3,king:5,page:1,orc:3,bone:2,
+  soldier:2,swordsman:3,axeman:3,lancer:3,templar:4
+};
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];
+export const RECRUIT_GAIN=3;
 export const spells = {
   'surge': {name:'魔力强化', price:3, text:'使相邻的在场友方单位永久获得+2攻击力和+2生命值。'},
-  'fireball': {name:'火球术', price:4, text:'消灭一个随机在场敌方单位。'}
+  'fireball': {name:'火球术', price:4, text:'消灭一个随机在场敌方单位。'},
+  'recruit': {name:'召唤法阵', price:2, text:'随机招募一名人类，永久获得+'+RECRUIT_GAIN+'攻击力和+'+RECRUIT_GAIN+'生命值。'}
 } as const;
 export type SpellKind = keyof typeof spells;
+export const spellKinds=Object.keys(spells) as SpellKind[];
 export type Offer = { title:string; kinds:Kind[]; price:number; sold:boolean; spell?:SpellKind };
-export function spellOffers():Offer[]{
-  return (Object.keys(spells) as SpellKind[]).map(spell=>({
-    title:spells[spell].name, kinds:[], price:spells[spell].price, sold:false, spell
-  }));
+export function spellOffer(spell:SpellKind):Offer{
+  return {title:spells[spell].name,kinds:[],price:spells[spell].price,sold:false,spell};
 }
 export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number}[] = [
   {name:'边境巡队',camp:'边境',units:['orc','orc','bone'],health:0,attack:0},
@@ -41,7 +48,6 @@ export const encounters: {name:string; camp:string; units:Kind[]; health:number;
 export const GOLD_REWARD = 3;
 export const REFRESH_COST = 1;
 export const REQUIRED_WINS = encounters.length;
-export function offer(kinds:Kind[],price:number,title=units[kinds[0]].name as string):Offer {
-  return {kinds,price,title,sold:false};
+export function unitOffer(kind:Kind):Offer {
+  return {kinds:[kind],price:unitPrices[kind],title:units[kind].name,sold:false};
 }
-export const royal = () => offer(['king','page','page'],5,'暮王与侍从');

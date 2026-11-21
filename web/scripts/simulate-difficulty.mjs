@@ -15,8 +15,9 @@ export function startingRuns(count, offset = 0) {
 
 function recruit(run) {
   const roll = mixSeed(run.seed ^ Math.imul(run.stage + 1, 0x7f4a7c15)) / 4294967296;
-  const preferred = run.stage === 0 ? Math.floor(roll * 3) : roll < .65 ? 0 : roll < .9 ? 1 : 2;
-  if (!buy(run, preferred) && !buy(run, 0) && !buy(run, 2)) {
+  const affordable = run.offers.flatMap((offer, index) =>
+    !offer.spell && !offer.sold && offer.price <= run.gold ? [index] : []);
+  if (!buy(run, affordable[Math.floor(roll * affordable.length)])) {
     throw Error('No affordable single recruit on stage ' + (run.stage + 1));
   }
 }

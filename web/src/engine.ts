@@ -1,4 +1,4 @@
-import {units, spells, spellOffers, encounters, offer, royal, hasGuardian, GOLD_REWARD, REFRESH_COST, type Kind, type Offer, type SpellKind} from './data.ts';
+import {units, unitKinds, humanKinds, spells, spellKinds, spellOffer, encounters, unitOffer, hasGuardian, GOLD_REWARD, REFRESH_COST, RECRUIT_GAIN, type Kind, type Offer, type SpellKind} from './data.ts';
 export type Side = 0|1;
 export const FIELD_LIMIT = 9;
 export type Unit = {
@@ -24,6 +24,9 @@ export function currentAttack(unit:Unit){
 export function maxHealth(unit:Unit){
   return units[unit.kind].hp+(unit.healthBonus??0)+(unit.battleHealthBonus??0);
 }
+function makeUnit(kind:Kind,side:Side,index:number,bonus:number,healthBonus:number):Unit{
+  return {id:side+'-'+index,kind,side,hp:units[kind].hp+healthBonus,shield:0,bonus,healthBonus,field:false};
+}
 function grantBattleStats(unit:Unit,attack:number,health:number){
   if(attack)unit.battleAttackBonus=(unit.battleAttackBonus??0)+attack;
   unit.battleHealthBonus=(unit.battleHealthBonus??0)+health;
@@ -39,13 +42,10 @@ function shuffle<T>(items:T[],s:{rng:number}):T[] {
   return items;
 }
 export function shop(seed:number,stage:number,refreshes=0) {
-  if(stage===0&&refreshes===0)return [offer(['archer'],3),offer(['swordsman'],3),offer(['lancer'],3),royal(),...spellOffers()];
   const s={rng:(seed ^ Math.imul(stage+1,0x9e3779b1) ^ Math.imul(refreshes+1,0x85ebca6b))>>>0};
-  const attack=pick<Kind>(['archer','swordsman','lancer'],s);
-  const support=pick<Kind>(stage>=2?['medic','axeman','templar']:['medic','axeman'],s);
-  const basic=pick<Kind>(['guard','soldier'],s);
-  return [offer([attack],3),offer([support],support==='templar'?4:3),offer([basic],2),
-    rng(s)<.5?royal():offer(['page','page'],2,'纸甲侍从小队'),...spellOffers()];
+  const offers=shuffle([...unitKinds],s).slice(0,3).map(unitOffer);
+  offers.push(spellOffer(pick(spellKinds,s)));
+  return offers;
 }
 export function newRun(seed:number):Run {
   return {version:1,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
@@ -93,14 +93,10 @@ export function removeUnit(run:Run,index:number){
 export function startBattle(r:Run){
   if(r.phase!=='shop')return;
   const encounter=encounters[r.stage];
-  const us=[r.roster,encounter.units].flatMap((team,side)=>team.map((k,i):Unit=>{
-    const id=side+'-'+i;
-    const healthBonus=side===0?(r.healthGrowth?.[id]??0):encounter.health;
-    const bonus=side===0?(r.attackGrowth?.[id]??0):encounter.attack;
-    return {id,kind:k,side:side as Side,hp:units[k].hp+healthBonus,shield:0,bonus,healthBonus,field:false};
-  }));
+  const allies=r.roster.map((kind,index)=>makeUnit(kind,0,index,r.attackGrowth?.['0-'+index]??0,r.healthGrowth?.['0-'+index]??0));
+  const enemies=encounter.units.map((kind,index)=>makeUnit(kind,1,index,encounter.attack,encounter.health));
   const pendingSpells=r.spells?.map((kind,index)=>({id:'spell-'+index,kind}));
-  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,spells:pendingSpells,lastingGrowth:true,immediateDeaths:true,corpseRules:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
+  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:[...allies,...enemies],spells:pendingSpells,lastingGrowth:true,immediateDeaths:true,corpseRules:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
@@ -218,7 +214,7 @@ export function step(start:Battle, order:'board'|'legacy'='board', {captureEvent
       const ids=targets.map(u=>u.id);
       const text=targets.length?'使'+targets.length+'名相邻单位永久获得+2/+2。':'没有相邻的在场友方单位。';
       record('法术',name+' · '+text,[id,...ids],{spell:spell.kind,source:id,value:'+2/+2',valueTargets:ids});
-    }else{
+    }else if(spell.kind==='fireball'){
       const targets=b.units.filter(u=>u.side===1&&u.field&&u.hp>0);
       const target=targets.length?pick(targets,b):undefined;
       if(target){
@@ -226,6 +222,11 @@ export function step(start:Battle, order:'board'|'legacy'='board', {captureEvent
         record('法术',name+' · 消灭'+label(target)+'。',[id,target.id],{spell:spell.kind,source:id,target:target.id,value:'消灭'});
         resolveLethalHit(target);
       }else record('法术',name+' · 没有在场敌方单位。',[id],{spell:spell.kind,source:id});
+    }else{
+      const kind=pick(humanKinds,b);
+      const count=b.units.filter(u=>u.side===0).length;
+      b.units.push(makeUnit(kind,0,count,RECRUIT_GAIN,RECRUIT_GAIN));
+      record('法术',name+' · '+units[kind].name+'加入战队，永久获得+'+RECRUIT_GAIN+'/+'+RECRUIT_GAIN+'。',[id],{spell:spell.kind,source:id});
     }
     castIds.add(id);
     alliedBoard[slot]=null;
@@ -356,11 +357,13 @@ export function step(start:Battle, order:'board'|'legacy'='board', {captureEvent
 export function commitRoll(r:Run,result:ReturnType<typeof step>){
   if(r.phase!=='battle'||!r.battle||r.battle.round+1!==result.next.round)return;
   r.history.push({...r.battle,order:'board'});r.battle=result.next;r.log.push(...result.events.map(e=>'第'+result.next.round+'摇 · '+e.text));
+  const allies=result.next.units.filter(u=>u.side===0);
+  for(const unit of allies.slice(r.roster.length))r.roster.push(unit.kind);
   if(result.next.lastingGrowth){
-    r.attackGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.bonus>0).map(u=>[u.id,u.bonus]));
+    r.attackGrowth=Object.fromEntries(allies.filter(u=>u.bonus>0).map(u=>[u.id,u.bonus]));
   }
   if(result.next.corpseRules){
-    r.healthGrowth=Object.fromEntries(result.next.units.filter(u=>u.side===0&&u.healthBonus).map(u=>[u.id,u.healthBonus!]));
+    r.healthGrowth=Object.fromEntries(allies.filter(u=>u.healthBonus).map(u=>[u.id,u.healthBonus!]));
   }
   if(result.next.spells)r.spells=result.next.spells.map(s=>s.kind);
   if(result.outcome){
