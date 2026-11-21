@@ -21,12 +21,13 @@ type Phase = '停盘'|'召唤'|'法术'|'联动'|'移动'|'攻击'|'阵亡'|'复
 export type Moment = {
   phase:Phase;text:string;focus:string[];state:Battle;originRoll?:number;
   action?:'attack'|'death'|'heal'|'empower'|'blocked';spell?:SpellKind;
-  source?:string;target?:string;value?:string;valueTargets?:string[];shieldGain?:number;
+  source?:string;target?:string;value?:string;valueTargets?:string[];damage?:number;shieldGain?:number;
 };
 export type RecordMoment = (
   phase:Phase,text:string,focus?:string[],
   detail?:Omit<Moment,'phase'|'text'|'focus'|'state'>
 )=>void;
+export type CombatTick = {state:Battle;from:number;until:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {
   version:2;seed:number;stage:number;gold:number;roster:Kind[];spells:SpellKind[];spellCasts:number;
@@ -113,7 +114,7 @@ function fieldOutcome(battle:Battle):Outcome|undefined{
 }
 
 export function step(start:Battle,{captureEvents=true}={}){
-  const battle=structuredClone(start),events:Moment[]=[];
+  const battle=structuredClone(start),events:Moment[]=[],ticks:CombatTick[]=[];
   const byId=new Map(battle.units.map(unit=>[unit.id,unit]));
   const record:RecordMoment=(phase,text,focus=[],detail={})=>{
     if(captureEvents)events.push({phase,text,focus,state:structuredClone(battle),...detail});
@@ -156,18 +157,20 @@ export function step(start:Battle,{captureEvents=true}={}){
   const limit=battle.round===1?COMBAT.openingTicks:COMBAT.ticksPerRoll;
   let result=fieldOutcome(battle);
   for(let i=0;i<limit&&!result;i++){
+    const from=events.length;
     advanceCombatTick(battle,{
       skill:effects.skill,
       motion:()=>record('移动','在场单位接近各自的目标。'),
       attack:effects.attack,
     });
+    if(captureEvents)ticks.push({state:structuredClone(battle),from,until:events.length});
     result=fieldOutcome(battle);
   }
   if(!result&&battle.round>=LAST_ROLL)result='平局';
-  return {next:battle,events,outcome:result};
+  return {next:battle,events,ticks,outcome:result};
 }
 
-export function commitRoll(run:Run,result:ReturnType<typeof step>){
+export function commitRoll(run:Run,result:Omit<ReturnType<typeof step>,'ticks'>){
   if(run.phase!=='battle'||!run.battle||run.battle.round+1!==result.next.round)return;
   run.history.push(run.battle);
   run.battle=result.next;

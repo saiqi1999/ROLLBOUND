@@ -182,7 +182,7 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     target.hp=Math.max(0,target.hp-damage+absorbed);
     if(target.hp===0)fall(target);
     record('攻击',label(unit)+'攻击'+units[target.kind].name+'，造成'+damage+'点伤害'+(shieldGain?'，自身获得2点护盾。':'。'),
-      [unit.id,target.id],{action:'attack',source:unit.id,target:target.id,value:'−'+damage,shieldGain});
+      [unit.id,target.id],{action:'attack',source:unit.id,target:target.id,value:'−'+damage,damage,shieldGain});
     if(target.hp===0)resolveLethalHit(target);
   }
 

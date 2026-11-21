@@ -4,6 +4,8 @@ import {newRun,startBattle,step,commitRoll} from '../src/engine.ts';
 import {makeUnit} from '../src/battle/unit-state.ts';
 import {spawnActor,queueSkill} from '../src/battle/combat.ts';
 import {COMBAT,profile} from '../src/battle/model.ts';
+import {actorFeedback,frameMessage,playbackFrames} from '../src/playback.ts';
+import {COMBAT_TICK_MS} from '../src/timing.ts';
 import {resolveMovement,distance} from '../src/battle/movement.ts';
 
 function scenario(allies,enemies){
@@ -118,4 +120,41 @@ test('wheel, targeting and effect random streams are independent',()=>{
   const base=step(battle),changed=step(alternate);
   assert.deepEqual(base.events[0].state.boards,changed.events[0].state.boards);
   assert.equal(base.next.rng,changed.next.rng);
+});
+
+
+test('independent strikes and movement share one fixed playback beat',()=>{
+  const {battle}=scenario([
+    ['archer',385,210],['archer',400,280],['guard',255,529],
+  ],[
+    ['guard',493,302],['bone',484,160],['orc',780,522],
+  ]);
+  const actors=battle.runtime.actors;
+  Object.assign(actors['0-0'],{phase:'windup',readyAt:1,targetId:'1-0'});
+  Object.assign(actors['0-1'],{phase:'windup',readyAt:1,targetId:'1-0'});
+  Object.assign(actors['1-1'],{phase:'windup',readyAt:1,targetId:'0-0'});
+  const result=step(battle);
+  const frames=playbackFrames(result);
+  const frame=frames.find(frame=>frame.kind==='combat');
+  const attacks=frame.moments.filter(m=>m.action==='attack');
+  assert.deepEqual(attacks.map(hit=>hit.source),['1-1','0-0','0-1']);
+  assert.ok(frame.moments.some(m=>m.phase==='移动'));
+  assert.ok(frame.state.runtime.actors['0-2'].position.x>actors['0-2'].position.x);
+  assert.equal(frame.duration,COMBAT_TICK_MS);
+  assert.deepEqual(frameMessage(frame),{phase:'攻击',text:'3 名单位出手。'});
+  const cues=actorFeedback(frame.moments);
+  for(const hit of attacks)assert.equal(cues.get(hit.source).attack,true);
+  assert.equal(cues.get('1-0').damage,6);
+  assert.equal(cues.get('0-0').damage,2);
+  assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
+  assert.deepEqual(frames,playbackFrames(step(JSON.parse(JSON.stringify(battle)))));
+});
+
+test('quiet combat ticks keep their cadence without adding playback time per action',()=>{
+  const {battle}=scenario([['guard',480,320]],[['orc',568,320]]);
+  const frames=playbackFrames(step(battle)).filter(frame=>frame.kind==='combat');
+  assert.equal(frames.length,COMBAT.ticksPerRoll);
+  assert.ok(frames.some(frame=>frame.moments.length===0));
+  assert.deepEqual(frames.map(frame=>frame.state.runtime.tick),[1,2,3,4,5,6]);
+  assert.ok(frames.every(frame=>frame.duration===COMBAT_TICK_MS));
 });
