@@ -54,11 +54,11 @@ export function spellOffer(spell:SpellKind):Offer{
 export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number; gold:number}[] = [
   {name:'边境巡队',camp:'边境',units:['orc','orc','bone'],health:-3,attack:-1,gold:10},
   {name:'灰骨哨所',camp:'哨所',units:['orc','orc','bone','bone'],health:-2,attack:-1,gold:4},
-  {name:'裂牙先锋',camp:'裂牙',units:['orc','orc','orc','bone','bone'],health:0,attack:0,gold:5},
-  {name:'黑铁前线',camp:'黑铁',units:['axeman','swordsman','soldier','guard','lancer','medic'],health:1,attack:0,gold:6},
-  {name:'荒原围军',camp:'荒原',units:['orc','orc','orc','orc','bone','bone','bone'],health:8,attack:3,gold:7},
-  {name:'铁誓军团',camp:'铁誓',units:['templar','axeman','swordsman','soldier','guard','medic','archer','archer'],health:4,attack:2,gold:8},
-  {name:'暮色王庭',camp:'王庭',units:['king','king','page','page','page','orc','orc','bone','bone'],health:15,attack:6,gold:9}
+  {name:'裂牙先锋',camp:'裂牙',units:['orc','orc','orc','bone','bone'],health:2,attack:0,gold:5},
+  {name:'黑铁前线',camp:'黑铁',units:['axeman','swordsman','soldier','guard','lancer','medic'],health:0,attack:0,gold:6},
+  {name:'荒原围军',camp:'荒原',units:['armoredOrc','orc','orc','orc','bone','bone','bone'],health:9,attack:2,gold:7},
+  {name:'铁誓军团',camp:'铁誓',units:['templar','axeman','swordsman','soldier','guard','medic','archer','archer'],health:2,attack:3,gold:8},
+  {name:'暮色王庭',camp:'王庭',units:['king','king','page','page','page','orc','orc','bone','bone'],health:13,attack:5,gold:9}
 ];
 export const REFRESH_COST = 1;
 export const REQUIRED_WINS = encounters.length;
