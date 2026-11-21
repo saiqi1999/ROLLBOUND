@@ -71,3 +71,15 @@
 .remove-confirm:not(:disabled) { background: #613b36; border-color: #ac756b; }
 .removal-entry { color: var(--gold); white-space: nowrap; }
 .removal-reward, .removal-notice { color: var(--gold); }
+
+.spell-shop { margin-top: 20px; }
+.spell-shop h3, .spell-inventory h4 { margin: 0 0 8px; }
+.spell-offers { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.spell-offer { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; gap: 8px; align-items: center; text-align: left; padding: 8px 10px; }
+.spell-offer[aria-pressed="true"] { border-color: var(--gold); background: #414139; }
+.spell-offer .sprite { width: 44px; }
+.spell-offer small { display: block; line-height: 1.4; }
+.spell-inventory { margin-top: 12px; }
+@media (max-width: 550px) {
+  .spell-offers { grid-template-columns: 1fr; }
+}

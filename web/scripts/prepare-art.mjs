@@ -50,4 +50,12 @@ for(let i=0;i<healFx.data.length;i+=4){
   healFx.data[i+2]=Math.round(blue*.49);
 }
 await writeFile(path.join(dest,'fx-empower.png'),PNG.sync.write(healFx));
+const wizardEffects={surge:'Wizard_Attack01_Effect.png',fireball:'Wizard_Attack02_Effect.png'};
+for(const [kind,file] of Object.entries(wizardEffects)){
+  const bytes=await readFile(new URL('../../Assets/Game/Art/Magic(Projectile)/'+file,import.meta.url));
+  const {width,height}=PNG.sync.read(bytes);
+  if(height!==100||width%100)throw Error('Invalid spell effects sheet: '+file);
+  manifest.fx[kind]=width/100;
+  await writeFile(path.join(dest,'fx-'+kind+'.png'),bytes);
+}
 await writeFile(path.join(dest,'frames.json'),JSON.stringify(manifest));

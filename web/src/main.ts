@@ -1,6 +1,6 @@
 import './style.css';
 import {ATTACK_MS,WHEEL_MOTION} from './timing.ts';
-import {units,encounters,races,hasGuardian,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind} from './data.ts';
+import {units,spells,spellOffers,encounters,races,hasGuardian,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
 import {newRun,shop,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,migrateExpedition,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Run} from './engine.ts';
 import {scenery} from './landscape.ts';
 import type * as Arena from './arena.ts';
@@ -19,6 +19,7 @@ function read():Run{
         }
       }
       migrateExpedition(saved);
+      if(saved.phase==='shop'&&!saved.offers.some(offer=>offer.spell))saved.offers.push(...spellOffers());
       // Continue the live battle under the current rules. Historical replay frames retain their rules.
       if(saved.phase==='battle'&&saved.battle){
         delete saved.battle.hp;
@@ -42,6 +43,7 @@ let arena:typeof Arena|undefined, token=0,replay=false,resumeAfterDialog=false,s
 let removalOpen=false, removalSelection:number|undefined, removalNotice='';
 function save(){try{localStorage.setItem(key,JSON.stringify(run));}catch{saveWarning=true;}}
 const art=(k:Kind,cls='',corpse=false)=>'<img class="sprite '+cls+'" src="'+base+k+(corpse?'-corpse':'')+'.png" alt="">';
+const spellArt=(kind:SpellKind)=>'<img class="sprite" src="'+import.meta.env.BASE_URL+'spells/'+kind+'.png" alt="">';
 const heart='♥', coin='<i class="coin" aria-hidden="true"></i>';
 const counts=(kinds:Kind[])=>Object.entries(kinds.reduce((a,k)=>(a[k]=(a[k]??0)+1,a),{} as Partial<Record<Kind,number>>)) as [Kind,number][];
 const opponentName=(stage:number)=>stage===2&&run.legacyThirdBattle?'暮色王庭':encounters[stage].name;
@@ -64,7 +66,7 @@ document.addEventListener('unit-info',((e:CustomEvent)=>{
   const v=e.detail;
   modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p><p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
 }) as EventListener);
-const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。进下一间商店时获得 '+GOLD_REWARD+' 金币，每次刷新货架花费 '+REFRESH_COST+' 金币。</p><p>每摇随机抽取最多九枚棋子放入九宫格。单位首次上场时召唤，后续摇到时攻击。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。有守护敌人在场时，从存活的守护敌人中随机选目标，否则从所有在场的存活敌人中随机选。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。弓手的攻击力成长和暮王的攻击、生命成长跟随各自的棋子，保留至本局结束。</p>';
+const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。进下一间商店时获得 '+GOLD_REWARD+' 金币，每次刷新货架花费 '+REFRESH_COST+' 金币。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。单位首次上场时召唤，后续摇到时攻击。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。有守护敌人在场时，从存活的守护敌人中随机选目标，否则从所有在场的存活敌人中随机选。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
 function rosterStats(kind:Kind,index:number,growth?:Pick<Run,'attackGrowth'|'healthGrowth'>){
   const id='0-'+index;
   return {attack:units[kind].atk+(growth?.attackGrowth?.[id]??0),health:units[kind].hp+(growth?.healthGrowth?.[id]??0)};
@@ -85,10 +87,29 @@ function team(kinds:Kind[],growth?:Pick<Run,'attackGrowth'|'healthGrowth'>,boost
 function landscape(k:Kind,ks:Kind[]){
   return '<div class="diorama"><canvas aria-hidden="true" data-scene="'+k+'"></canvas><div class="party">'+ks.map((n,i)=>art(n,i?'companion':'lead')).join('')+'</div></div>';
 }
+function spellInventory(){
+  const owned=run.spells??[];
+  if(!owned.length)return '';
+  return '<div class="spell-inventory"><h4>待施放法术</h4><div class="roster">'+[...new Set(owned)].map(kind=>
+    '<button class="roster-unit" data-spell="'+kind+'">'+spellArt(kind)+'<span>'+spells[kind].name+'</span><b>×'+owned.filter(s=>s===kind).length+'</b></button>'
+  ).join('')+'</div></div>';
+}
 function shopView(){
   const selectedOffer=run.offers[selected],remain=run.gold-selectedOffer.price;
   const encounter=encounters[run.stage];
+  const spellCards=run.offers.map((offer,i)=>{
+    if(!offer.spell)return '';
+    const kind=offer.spell;
+    return '<button class="spell-offer" data-offer="'+i+'" aria-pressed="'+(i===selected)+'">'+spellArt(kind)
+      +'<span><strong>'+offer.title+'</strong><small>'+spells[kind].text+'</small></span>'
+      +'<span class="price">'+(offer.sold?'已购买':coin+offer.price)+'</span></button>';
+  }).join('');
+  const purchase=selectedOffer.spell?
+    '<small>法术预览</small><b>'+selectedOffer.title+'</b><span>首次摇到时施放并消耗。</span>'
+    :'<small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span>';
+  const buyLabel=selectedOffer.spell?'购买':'招募';
   app.innerHTML=header()+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+' / '+encounters.length+'</div><h1>'+encounter.camp+'营地'+'</h1><p>招募棋子，备战'+encounter.name+'。</p></div><div class="shop-tools"><div class="purse">'+coin+'<strong>'+run.gold+'</strong><span>金币</span></div><button class="quiet refresh" data-act="refresh" '+(run.gold<REFRESH_COST?'disabled':'')+'>刷新 · '+REFRESH_COST+' 金币</button><button class="quiet removal-entry" data-act="manage-removal">移除标记 · '+removalMarkers(run)+'</button></div></div><div class="offers">'+run.offers.map((o,i)=>{
+    if(o.spell)return '';
     const s=selected===i;
     const entries=[...new Set(o.kinds)].map(kind=>{
       const def=units[kind];
@@ -96,7 +117,8 @@ function shopView(){
         +unitTags(kind)+'　⚔ '+def.atk+'　'+heart+' '+def.hp+'</div><p>'+def.text+'</p></div>';
     }).join('');
     return '<button class="offer '+(s?'selected ':'')+(o.sold?'sold':'')+'" data-offer="'+i+'" aria-pressed="'+s+'">'+landscape(o.kinds[0],o.kinds)+'<div class="cardbody"><div class="cardhead"><h2>'+o.title+'</h2><span class="price">'+coin+o.price+'</span></div>'+entries+'<div class="cardfoot"><span>'+(o.sold?'已招募':o.kinds.length>1?'成组招募':'单枚招募')+'</span><span>'+(s?'◆ 已选中':'◇ 选择')+'</span></div></div></button>';
-  }).join('')+'</div><div class="purchase"><div><small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span></div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已招募':remain<0?'还差 '+(-remain)+' 金币':'招募 · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster,run)+'</div></div><div><h3>下战对手 <small>'+encounter.name+'</small></h3><div class="roster enemy">'+team(encounter.units,undefined,encounter)+'</div></div></div><div class="depart"><span>'+ (run.stage<encounters.length-1?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
+  }).join('')+'</div><section class="spell-shop"><h3>一次性法术</h3><div class="spell-offers">'+spellCards+'</div></section>'
+    +'<div class="purchase"><div>'+purchase+'</div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已'+buyLabel:remain<0?'还差 '+(-remain)+' 金币':buyLabel+' · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster,run)+'</div>'+spellInventory()+'</div><div><h3>下战对手 <small>'+encounter.name+'</small></h3><div class="roster enemy">'+team(encounter.units,undefined,encounter)+'</div></div></div><div class="depart"><span>'+ (run.stage<encounters.length-1?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
   for(const c of app.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(c,c.dataset.scene!);
 }
 function removalView(){
@@ -131,6 +153,11 @@ function paint(){
     const arr=b.boards[side],living=b.units.filter(u=>u.side===side&&u.hp>0),live=living.length;
     document.querySelector('#team'+side)!.textContent=(side?'敌方':'我方')+'在场 '+living.filter(u=>u.field).length+(b.corpseRules?'/'+FIELD_LIMIT:'');
     document.querySelector('#wheel'+side)!.innerHTML='<h3>'+(side?'敌方轮盘':'我方轮盘')+'<small>存活 '+live+'</small></h3><div class="grid">'+arr.map(id=>{
+      const spell=b.spells?.find(s=>s.id===id);
+      if(spell){
+        const lit=e?.focus.includes(spell.id)?' lit':'';
+        return '<button class="cell'+lit+'" data-spell="'+spell.kind+'" aria-label="'+spells[spell.kind].name+'">'+spellArt(spell.kind)+'</button>';
+      }
       const u=b.units.find(n=>n.id===id);
       if(!u)return '<span class="cell empty">·</span>';
       const focused=e?.focus.includes(u.id);
@@ -195,6 +222,11 @@ function render(){
 app.addEventListener('click',event=>{
   const el=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!el||el.disabled)return;
   if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+unitTags(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+(Number(el.dataset.health)||units[k].hp)+'</p><p>'+units[k].text+'</p>');return;}
+  if(el.dataset.spell){
+    const kind=el.dataset.spell as SpellKind;
+    modal(spells[kind].name,spellArt(kind)+'<p>'+spells[kind].text+'</p><p>首次摇到时施放并消耗。</p>');
+    return;
+  }
   if(el.dataset.offer!==undefined){selected=Number(el.dataset.offer);shopView();return;}
   if(el.dataset.removeIndex!==undefined&&removalOpen){
     removalSelection=Number(el.dataset.removeIndex);

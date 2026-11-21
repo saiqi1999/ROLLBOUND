@@ -531,3 +531,121 @@ test('human stat buffs and revive usage reset between fights',()=>{
   assert.equal(maxHealth(fresh),9);
   assert.equal(fresh.hp,9);
 });
+
+test('shop spell purchases cost gold and enter the next wheel instead of the unit roster',()=>{
+  const r=newRun(11);
+  const surgeIndex=r.offers.findIndex(o=>o.spell==='surge');
+  const fireballIndex=r.offers.findIndex(o=>o.spell==='fireball');
+  assert.equal(buy(r,surgeIndex),true);
+  assert.equal(buy(r,surgeIndex),false);
+  assert.equal(buy(r,fireballIndex),false);
+  assert.equal(r.gold,2);
+  assert.deepEqual(r.roster,['guard','guard','soldier']);
+  assert.deepEqual(r.spells,['surge']);
+  assert.equal(refreshShop(r),true);
+  assert.equal(r.offers.filter(o=>o.spell).length,2);
+  const resumed=JSON.parse(JSON.stringify(r));
+  startBattle(resumed);
+  assert.equal(resumed.battle.units.filter(u=>u.side===0).length,3);
+  assert.deepEqual(resumed.battle.spells,[{id:'spell-0',kind:'surge'}]);
+});
+
+test('a drawn surge grows all live adjacent allies including diagonals and is spent across battles',()=>{
+  const r=newRun(4);
+  r.roster=['page','page','page','page','page','page','page'];
+  r.spells=['surge'];
+  startBattle(r);
+  const checkpoint=r.battle;
+  const spentId='spell-0';
+  checkpoint.units[0].hp=0;
+  for(let seed=0;seed<100;seed++){
+    checkpoint.rng=seed;
+    const roll=step(checkpoint);
+    const board=roll.events[0].state.boards[0];
+    const index=board.indexOf(spentId);
+    const targets=board.filter((id,slot)=>id?.startsWith('0-')&&id!=='0-0'&&adjacent(index,slot));
+    if(!targets.length||targets.length===6||!board.some((id,slot)=>targets.includes(id)&&slot%3!==index%3&&Math.floor(slot/3)!==Math.floor(index/3)))continue;
+    const cast=roll.events.find(e=>e.spell==='surge');
+    const lastSummon=roll.events.findLastIndex(e=>e.phase==='召唤');
+    assert.ok(roll.events.indexOf(cast)>lastSummon);
+    assert.deepEqual(cast.valueTargets,targets);
+    assert.ok(!roll.next.boards[0].includes(spentId));
+    for(const piece of roll.next.units.filter(u=>u.side===0)){
+      assert.equal(piece.bonus,targets.includes(piece.id)?2:0);
+      assert.equal(maxHealth(piece),units.page.hp+(targets.includes(piece.id)?2:0));
+      assert.equal(piece.hp,piece.id==='0-0'?0:maxHealth(piece));
+    }
+    assert.deepEqual(step(checkpoint),roll);
+    commitRoll(r,{...roll,outcome:'胜利'});
+    const saved=JSON.parse(JSON.stringify(r));
+    assert.deepEqual(saved.spells,[]);
+    advance(saved);
+    startBattle(saved);
+    const pieces=saved.battle.units.filter(u=>u.side===0);
+    for(const piece of pieces){
+      assert.equal(piece.bonus,targets.includes(piece.id)?2:0);
+      assert.equal(piece.hp,units.page.hp+(targets.includes(piece.id)?2:0));
+    }
+    assert.ok(!step(saved.battle).events.some(e=>e.spell));
+    return;
+  }
+  assert.fail('No board with eligible diagonal and nonadjacent units');
+});
+
+test('fireball selects live enemies at random regardless of guarding or armor and skips a slain unit turn',()=>{
+  const b=field(['page'],['axeman','orc']);
+  b.units.find(u=>u.kind==='orc').shield=999;
+  b.spells=[{id:'spell-0',kind:'fireball'}];
+  const seen=new Set();
+  for(let seed=0;seed<40;seed++){
+    b.rng=seed;
+    const roll=step(b);
+    const cast=roll.events.find(e=>e.spell==='fireball');
+    assert.ok(cast.target.startsWith('1-'));
+    seen.add(cast.target);
+    const victim=roll.next.units.find(u=>u.id===cast.target);
+    assert.equal(victim.hp,0);
+    assert.equal(victim.shield,0);
+    assert.ok(roll.events.some(e=>e.action==='death'&&e.focus.includes(victim.id)));
+    assert.ok(!roll.events.some(e=>e.action==='attack'&&e.source===victim.id));
+    assert.deepEqual(roll.next.spells,[]);
+  }
+  assert.deepEqual(seen,new Set(['1-0','1-1']));
+});
+
+test('fireball uses the templar death and revival sequence',()=>{
+  const b=field(['page'],['templar']);
+  b.spells=[{id:'spell-0',kind:'fireball'}];
+  const roll=step(b);
+  assert.deepEqual(roll.events.map(e=>e.phase).slice(0,4),['停盘','法术','阵亡','复活']);
+  assert.equal(roll.next.units[1].revived,true);
+  assert.equal(roll.next.units[1].field,true);
+  assert.deepEqual(roll.next.spells,[]);
+});
+
+test('spells without targets are spent, while an undrawn copy carries into the next battle',()=>{
+  const empty=field([],[]);
+  empty.spells=[{id:'spell-0',kind:'surge'},{id:'spell-1',kind:'fireball'}];
+  const emptyResult=step(empty);
+  assert.equal(emptyResult.events.filter(e=>e.spell).length,2);
+  assert.deepEqual(emptyResult.next.spells,[]);
+
+  const r=newRun(15);
+  r.roster=Array(9).fill('guard');
+  r.spells=['surge','surge'];
+  startBattle(r);
+  for(let seed=0;seed<100;seed++){
+    r.battle.rng=seed;
+    const roll=step(r.battle);
+    if(roll.next.spells.length!==1)continue;
+    assert.equal(roll.events.filter(e=>e.spell==='surge').length,1);
+    assert.equal(roll.next.units.filter(u=>u.side===0&&u.field).length,8);
+    commitRoll(r,{...roll,outcome:'胜利'});
+    assert.deepEqual(r.spells,['surge']);
+    advance(r);
+    startBattle(r);
+    assert.deepEqual(r.battle.spells,[{id:'spell-0',kind:'surge'}]);
+    return;
+  }
+  assert.fail('No roll with one undrawn copy');
+});

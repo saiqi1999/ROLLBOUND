@@ -7,7 +7,7 @@ const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
   Object.keys(units).map(k=>[k,k==='medic'?['idle','attack','death','heal']:['idle','attack','death']])
 ) as Record<Kind,string[]>;
-const spellEffects=['heal','empower'] as const;
+const effectStills={heal:1,empower:1,surge:3,fireball:0} as const;
 const SPELL_MS=400;
 let scene:Stage|undefined, game:Phaser.Game|undefined, observer:ResizeObserver|undefined, latest:{b:Battle,e:Moment|undefined,speed:number}|undefined;
 class Stage extends Phaser.Scene {
@@ -17,7 +17,7 @@ class Stage extends Phaser.Scene {
     for(const [kind,moves] of Object.entries(actions))for(const move of moves){
       this.load.spritesheet(kind+'-'+move,base+kind+'-'+move+'.png',{frameWidth:80,frameHeight:64});
     }
-    for(const fx of spellEffects)this.load.spritesheet('fx-'+fx,base+'fx-'+fx+'.png',{frameWidth:100,frameHeight:100});
+    for(const fx of Object.keys(effectStills))this.load.spritesheet('fx-'+fx,base+'fx-'+fx+'.png',{frameWidth:100,frameHeight:100});
   }
   create(){
     const frames=this.cache.json.get('frames');
@@ -25,7 +25,7 @@ class Stage extends Phaser.Scene {
       const key=k+'-'+move;
       this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames[k][move]-1}),frameRate:move==='idle'?7:16,repeat:move==='idle'?-1:0});
     }
-    for(const fx of spellEffects){
+    for(const fx of Object.keys(effectStills)){
       const key='fx-'+fx;
       this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames.fx[fx]-1}),duration:SPELL_MS,repeat:0});
     }
@@ -37,7 +37,7 @@ class Stage extends Phaser.Scene {
     this.tweens.killAll();this.children.removeAll(true);
     const {width:w,height:h}=this.scale;
     const combatants=b.units.filter(u=>u.field||
-      (e?.action==='attack'&&e.target===u.id)||
+      ((e?.action==='attack'||e?.spell==='fireball')&&e.target===u.id)||
       (e?.action==='death'&&e.focus.includes(u.id)));
     const positions=new Map<string,{x:number;y:number}>();
     for(const side of [0,1]){
@@ -60,7 +60,7 @@ class Stage extends Phaser.Scene {
   actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number,speed:number){
     const active=e?.focus.includes(u.id);
     const action=e?.action;
-    const hit=action==='attack'&&e?.target===u.id;
+    const hit=(action==='attack'||e?.spell==='fireball')&&e?.target===u.id;
     const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const scale=Math.max(.8,Math.min(w/(count>6?170:130),h/(Math.ceil(count/(count>6?3:2))*44+20),3.6));
     const marked=active&&e?.action!=='attack';
@@ -81,11 +81,12 @@ class Stage extends Phaser.Scene {
       else sprite.play(key);
     }
     if(hit)flashHit(sprite,96/speed);
-    const receivesEffect=e?.target===u.id||(action==='empower'&&e?.valueTargets?.includes(u.id));
-    if(receivesEffect&&(action==='heal'||action==='empower')){
-      const fxKey='fx-'+action;
+    const effect=e?.spell??(action==='heal'||action==='empower'?action:undefined);
+    const receivesEffect=e?.target===u.id||e?.valueTargets?.includes(u.id);
+    if(effect&&receivesEffect){
+      const fxKey='fx-'+effect;
       const fx=this.add.sprite(x,y+9,fxKey).setOrigin(.5,.60).setScale(scale);
-      if(reducedMotion)fx.setFrame(1);
+      if(reducedMotion)fx.setFrame(effectStills[effect]);
       else fx.play({key:fxKey,duration:SPELL_MS/speed}).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>fx.destroy());
     }
     const attack=currentAttack(u);
