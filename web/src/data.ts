@@ -14,14 +14,16 @@ export const units = {
   swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:'入场时，使相邻的友方在场人类获得+2/+2。' },
   axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:'入场和阵亡时，使所有友方在场人类获得3点护甲。' },
   lancer: { name:'长枪兵', race:'human', hp:6, atk:2, text:'每次摇到时，若相邻格有空位，获得+2/+1。' },
-  templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'每场战斗首次阵亡时，满血复活并使所有友方在场人类获得+1/+1。' }
+  templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'每场战斗首次阵亡时，满血复活并使所有友方在场人类获得+1/+1。' },
+  wizard: { name:'法师', race:'human', hp:7, atk:2, text:'入场时，使相邻的在场友方单位获得+1/+1。本局每施放一个法术，此加成提高+1/+1。' }
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
 export const unitKinds=Object.keys(units) as Kind[];
 export const humanKinds=unitKinds.filter(kind=>units[kind].race==='human');
+export const wizardEntryGain=(spellCasts=0)=>1+spellCasts;
 const unitPrices:Record<Kind,number>={
   guard:2,archer:3,medic:3,king:5,page:1,orc:3,bone:2,
-  soldier:2,swordsman:3,axeman:3,lancer:3,templar:4
+  soldier:2,swordsman:3,axeman:3,lancer:3,templar:4,wizard:3
 };
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];
 export const RECRUIT_GAIN=3;

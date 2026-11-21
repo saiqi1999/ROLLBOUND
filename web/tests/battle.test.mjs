@@ -697,3 +697,67 @@ test('summoning circles each recruit one human with permanent growth and wait un
   }
   assert.ok(!step(reloaded.battle).events.some(e=>e.spell==='recruit'));
 });
+
+test('a wizard buffs living adjacent allies of any race on entry before same-roll casts',()=>{
+  const b=field(['wizard','page','orc','soldier'],['orc']);
+  b.units[0].field=false;
+  b.units[3].field=false;
+  b.units[3].hp=0;
+  b.spells=[{id:'spell-0',kind:'fireball'}];
+  for(let seed=0;seed<100;seed++){
+    b.rng=seed;
+    const roll=step(b);
+    const grid=roll.events[0].state.boards[0];
+    const index=grid.indexOf('0-0'),page=grid.indexOf('0-1'),orc=grid.indexOf('0-2');
+    if(Math.abs(index%3-page%3)!==1||Math.abs(Math.floor(index/3)-Math.floor(page/3))!==1||adjacent(index,orc))continue;
+    const entry=roll.events.find(e=>e.phase==='召唤'&&e.source==='0-0');
+    assert.equal(entry.value,'+1/+1');
+    assert.deepEqual(entry.valueTargets,['0-1']);
+    assert.equal(entry.state.units[1].battleAttackBonus,1);
+    assert.equal(entry.state.units[1].battleHealthBonus,1);
+    assert.equal(entry.state.units[2].battleAttackBonus,undefined);
+    assert.equal(entry.state.units[3].hp,0);
+    assert.equal(entry.state.spellCasts,0);
+    assert.equal(roll.next.spellCasts,1);
+    assert.ok(roll.events.indexOf(entry)<roll.events.findIndex(e=>e.spell==='fireball'));
+    assert.ok(!step(roll.next).events.some(e=>e.phase==='召唤'&&e.source==='0-0'));
+    return;
+  }
+  assert.fail('No diagonal ally with a nonadjacent ally');
+});
+
+test('cast history grows future wizard entries across reload, recruitment and battles',()=>{
+  const r=newRun(15);
+  r.spells=['surge','fireball','recruit'];
+  startBattle(r);
+  const first=step(r.battle);
+  assert.equal(first.next.spellCasts,3);
+  commitRoll(r,{...first,outcome:'胜利'});
+  const saved=JSON.parse(JSON.stringify(r));
+  advance(saved);
+  saved.roster=['wizard',...Array(7).fill('page')];
+  saved.attackGrowth={};saved.healthGrowth={};
+  startBattle(saved);
+  const second=step(saved.battle);
+  const entry=second.events.find(e=>e.phase==='召唤'&&e.source==='0-0');
+  assert.equal(entry.value,'+4/+4');
+  assert.equal(second.next.spellCasts,3);
+  for(const unit of second.next.units.filter(u=>entry.valueTargets.includes(u.id))){
+    assert.equal(unit.hp,units.page.hp+4);
+    assert.equal(unit.bonus,0);
+    assert.equal(unit.healthBonus,0);
+  }
+  commitRoll(saved,{...second,outcome:'胜利'});
+  advance(saved);
+  startBattle(saved);
+  assert.equal(saved.battle.spellCasts,3);
+  assert.ok(saved.battle.units.filter(u=>u.kind==='page').every(u=>u.hp===units.page.hp));
+});
+
+test('an expired spell with no valid target is still counted once',()=>{
+  const b=field([],[]);
+  b.spells=[{id:'spell-0',kind:'surge'}];
+  const first=step(b);
+  assert.equal(first.next.spellCasts,1);
+  assert.equal(step(first.next).next.spellCasts,1);
+});

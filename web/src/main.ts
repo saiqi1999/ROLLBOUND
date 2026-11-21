@@ -1,6 +1,6 @@
 import './style.css';
 import {ATTACK_MS,WHEEL_MOTION} from './timing.ts';
-import {units,spells,encounters,races,hasGuardian,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
+import {units,spells,encounters,races,hasGuardian,wizardEntryGain,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
 import {newRun,shop,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,migrateExpedition,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Run} from './engine.ts';
 import {scenery} from './landscape.ts';
 import type * as Arena from './arena.ts';
@@ -16,11 +16,16 @@ function read():Run{
         if(saved.stage===2&&saved.phase!=='shop')saved.legacyThirdBattle=true;
       }
       migrateExpedition(saved);
+      if(saved.spellCasts===undefined){
+        const startingSpells=saved.history[0]?.spells?.length??0;
+        saved.spellCasts=Math.max(0,startingSpells-(saved.battle?.spells?.length??0));
+      }
       if(saved.phase==='shop'&&(saved.offers.length!==4||saved.offers.filter(offer=>offer.spell).length!==1||saved.offers.some(offer=>!offer.spell&&offer.kinds.length!==1))){
         saved.offers=shop(saved.seed,saved.stage,saved.refreshes);
       }
       // Continue the live battle under the current rules. Historical replay frames retain their rules.
       if(saved.phase==='battle'&&saved.battle){
+        saved.battle.spellCasts??=saved.spellCasts??0;
         delete saved.battle.hp;
         saved.battle.lastingGrowth=true;
         saved.battle.immediateDeaths=true;
@@ -61,9 +66,15 @@ dialog.addEventListener('close',()=>{if(resumeAfterDialog&&paused&&run.phase==='
 function unitTags(kind:Kind){
   return '<span class="unit-tags">'+races[units[kind].race]+(hasGuardian(kind)?' · 守护':'')+'</span>';
 }
+function wizardPreview(kind:Kind){
+  if(kind!=='wizard')return '';
+  const casts=run.phase==='battle'||replay?currentState().spellCasts:run.spellCasts;
+  const gain=wizardEntryGain(casts);
+  return '<small class="unit-tags">下次入场增益 +'+gain+'/+'+gain+'</small>';
+}
 document.addEventListener('unit-info',((e:CustomEvent)=>{
   const v=e.detail;
-  modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p><p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
+  modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p>'+wizardPreview(v.kind)+'<p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
 }) as EventListener);
 const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。进下一间商店时获得 '+GOLD_REWARD+' 金币，每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。单位首次上场时召唤，后续摇到时攻击。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。有守护敌人在场时，从存活的守护敌人中随机选目标，否则从所有在场的存活敌人中随机选。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
 function rosterStats(kind:Kind,index:number,growth?:Pick<Run,'attackGrowth'|'healthGrowth'>){
@@ -104,7 +115,7 @@ function shopView(){
     const state=offer.sold?(spell?'已购买':'已招募'):(spell?'首次摇到时施放':'单枚招募');
     return '<button class="offer '+(s?'selected ':'')+(offer.sold?'sold':'')+'" data-offer="'+i+'" aria-pressed="'+s+'">'+visual+
       '<div class="cardbody"><div class="cardhead"><h2>'+offer.title+'</h2><span class="price">'+coin+offer.price+'</span></div>'+
-      '<div class="statline">'+stats+'</div><p>'+description+'</p><div class="cardfoot"><span>'+state+'</span><span>'+(s?'◆ 已选中':'◇ 选择')+'</span></div></div></button>';
+      '<div class="statline">'+stats+'</div><p>'+description+'</p>'+(spell?'':wizardPreview(unit))+'<div class="cardfoot"><span>'+state+'</span><span>'+(s?'◆ 已选中':'◇ 选择')+'</span></div></div></button>';
   }).join('');
   const purchase=selectedOffer.spell?
     '<small>法术预览</small><b>'+selectedOffer.title+'</b><span>首次摇到时施放并消耗。</span>'
@@ -214,7 +225,7 @@ function render(){
 }
 app.addEventListener('click',event=>{
   const el=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!el||el.disabled)return;
-  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+unitTags(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+(Number(el.dataset.health)||units[k].hp)+'</p><p>'+units[k].text+'</p>');return;}
+  if(el.dataset.kind){const k=el.dataset.kind as Kind;modal(units[k].name,art(k)+unitTags(k)+'<p>攻击 '+(Number(el.dataset.attack)||units[k].atk)+'　生命 '+(Number(el.dataset.health)||units[k].hp)+'</p><p>'+units[k].text+'</p>'+wizardPreview(k));return;}
   if(el.dataset.spell){
     const kind=el.dataset.spell as SpellKind;
     modal(spells[kind].name,spellArt(kind)+'<p>'+spells[kind].text+'</p><p>首次摇到时施放并消耗。</p>');

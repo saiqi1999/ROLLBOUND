@@ -1,4 +1,4 @@
-import {units, unitKinds, humanKinds, spells, spellKinds, spellOffer, encounters, unitOffer, hasGuardian, GOLD_REWARD, REFRESH_COST, RECRUIT_GAIN, type Kind, type Offer, type SpellKind} from './data.ts';
+import {units, unitKinds, humanKinds, spells, spellKinds, spellOffer, encounters, unitOffer, hasGuardian, wizardEntryGain, GOLD_REWARD, REFRESH_COST, RECRUIT_GAIN, type Kind, type Offer, type SpellKind} from './data.ts';
 export type Side = 0|1;
 export const FIELD_LIMIT = 9;
 export type Unit = {
@@ -6,11 +6,11 @@ export type Unit = {
   roundAttackBonus?:number; healthBonus?:number; corpseConsumed?:true;
   battleAttackBonus?:number; battleHealthBonus?:number; revived?:true;
 };
-export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; spells?:{id:string; kind:SpellKind}[]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true; corpseRules?:true};
+export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; spells?:{id:string; kind:SpellKind}[]; spellCasts?:number; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true; corpseRules?:true};
 export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'|'blocked'; spell?:SpellKind; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
 export type Run = {
-  version:1; seed:number; stage:number; gold:number; roster:Kind[]; spells?:SpellKind[];
+  version:1; seed:number; stage:number; gold:number; roster:Kind[]; spells?:SpellKind[]; spellCasts?:number;
   attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>;
   offers:Offer[]; refreshes?:number; removalsUsed?:number;
   legacyThirdBattle?:true; legacyClearRequirement?:number;
@@ -18,6 +18,7 @@ export type Run = {
   results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[];
 };
 const copy = <T>(x:T):T => structuredClone(x);
+const replayHumanKinds=humanKinds.filter(kind=>kind!=='wizard');
 export function currentAttack(unit:Unit){
   return units[unit.kind].atk+unit.bonus+(unit.battleAttackBonus??0)+(unit.roundAttackBonus??0);
 }
@@ -48,7 +49,7 @@ export function shop(seed:number,stage:number,refreshes=0) {
   return offers;
 }
 export function newRun(seed:number):Run {
-  return {version:1,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
+  return {version:1,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),spellCasts:0,refreshes:0,removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[]};
 }
 export function buy(run:Run,index:number) {
   const o=run.offers[index];
@@ -96,7 +97,7 @@ export function startBattle(r:Run){
   const allies=r.roster.map((kind,index)=>makeUnit(kind,0,index,r.attackGrowth?.['0-'+index]??0,r.healthGrowth?.['0-'+index]??0));
   const enemies=encounter.units.map((kind,index)=>makeUnit(kind,1,index,encounter.attack,encounter.health));
   const pendingSpells=r.spells?.map((kind,index)=>({id:'spell-'+index,kind}));
-  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:[...allies,...enemies],spells:pendingSpells,lastingGrowth:true,immediateDeaths:true,corpseRules:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
+  r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:[...allies,...enemies],spells:pendingSpells,spellCasts:r.spellCasts??0,lastingGrowth:true,immediateDeaths:true,corpseRules:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
@@ -196,6 +197,13 @@ export function step(start:Battle, order:'board'|'legacy'='board', {captureEvent
       for(const ally of allies)grantBattleStats(ally,2,2);
       recordBuff('召唤',u,allies,'使相邻的友方在场人类获得+2/+2。','+2/+2','empower');
     }
+    if(u.kind==='wizard'){
+      const allies=neighborsOf(b.boards[u.side],u.id).filter(n=>n.field&&n.hp>0);
+      const gain=wizardEntryGain(u.side===0?b.spellCasts:0);
+      for(const ally of allies)grantBattleStats(ally,gain,gain);
+      const value='+'+gain+'/+'+gain;
+      recordBuff('召唤',u,allies,'使相邻的友方在场单位获得'+value+'。',value,'empower');
+    }
     if(u.kind==='axeman')grantHumanArmor(u,'召唤');
   }
   const alliedBoard=b.boards[0],castIds=new Set<string>();
@@ -203,6 +211,7 @@ export function step(start:Battle, order:'board'|'legacy'='board', {captureEvent
     if(!id)continue;
     const spell=b.spells?.find(s=>s.id===id);
     if(!spell)continue;
+    if(b.spellCasts!==undefined)b.spellCasts++;
     const name=spells[spell.kind].name;
     if(spell.kind==='surge'){
       const targets=neighborsOf(alliedBoard,id).filter(u=>u.field&&u.hp>0);
@@ -223,7 +232,8 @@ export function step(start:Battle, order:'board'|'legacy'='board', {captureEvent
         resolveLethalHit(target);
       }else record('法术',name+' · 没有在场敌方单位。',[id],{spell:spell.kind,source:id});
     }else{
-      const kind=pick(humanKinds,b);
+      // Replay snapshots from before the Wizard use the human pool they originally rolled.
+      const kind=pick(b.spellCasts===undefined?replayHumanKinds:humanKinds,b);
       const count=b.units.filter(u=>u.side===0).length;
       b.units.push(makeUnit(kind,0,count,RECRUIT_GAIN,RECRUIT_GAIN));
       record('法术',name+' · '+units[kind].name+'加入战队，永久获得+'+RECRUIT_GAIN+'/+'+RECRUIT_GAIN+'。',[id],{spell:spell.kind,source:id});
@@ -366,6 +376,7 @@ export function commitRoll(r:Run,result:ReturnType<typeof step>){
     r.healthGrowth=Object.fromEntries(allies.filter(u=>u.healthBonus).map(u=>[u.id,u.healthBonus!]));
   }
   if(result.next.spells)r.spells=result.next.spells.map(s=>s.kind);
+  if(result.next.spellCasts!==undefined)r.spellCasts=result.next.spellCasts;
   if(result.outcome){
     r.results.push(result.outcome);
     r.phase=result.outcome==='胜利'?'result':'end';
