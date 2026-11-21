@@ -155,7 +155,7 @@ test('quiet combat ticks keep their cadence without adding playback time per act
   const frames=playbackFrames(step(battle));
   assert.equal(frames.length,COMBAT.ticksPerRoll);
   assert.ok(frames.some(frame=>frame.moments.length===0));
-  assert.deepEqual(frames.map(frame=>frame.state.runtime.tick),[1,2,3,4,5,6]);
+  assert.deepEqual(frames.map(frame=>frame.state.runtime.tick),Array.from({length:COMBAT.ticksPerRoll},(_,i)=>i+1));
   assert.ok(frames.every(frame=>frame.duration===COMBAT_TICK_MS));
 });
 
@@ -165,6 +165,7 @@ test('rolls with deployments and spells use the same uninterrupted combat cadenc
   run.roster=['guard','guard','soldier','wizard','medic'];
   run.spells=['surge','recruit'];
   startBattle(run);
+  for(const unit of run.battle.units)unit.shield=100;
   for(let i=0;i<2;i++){
     const battle=run.battle,result=step(battle);
     const frames=playbackFrames(result);
@@ -172,14 +173,15 @@ test('rolls with deployments and spells use the same uninterrupted combat cadenc
     assert.equal(first.state.runtime.tick,battle.runtime.tick+1);
     assert.ok(first.moments.some(moment=>moment.phase==='停盘'));
     assert.ok(first.moments.some(moment=>moment.phase==='移动'));
-    assert.equal(frames.length,result.ticks.length);
+    assert.equal(frames.length,10);
+    assert.equal(result.outcome,undefined);
     assert.equal(frames.reduce((ms,frame)=>ms+frame.duration,0),result.ticks.length*COMBAT_TICK_MS);
     assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
     assert.deepEqual(frames.at(-1).state,result.next);
     if(i===0){
       assert.ok(first.moments.some(moment=>moment.phase==='召唤'));
       const motions=wheelCues(first).map(cue=>cue.motion);
-      assert.equal(motions[0],'draw');
+      assert.ok(wheelCues(first).every(cue=>cue.moment.phase!=='停盘'));
       assert.equal(motions.filter(motion=>motion==='cast').length,2);
       assert.ok(motions.includes('orbit'));
     }
@@ -204,4 +206,26 @@ test('a wheel spell that ends the battle yields one terminal frame with its orig
   const defeated=actorFeedback(frame.moments).get('1-0');
   assert.equal(defeated.hit,true);
   assert.equal(defeated.death,true);
+});
+
+
+test('a wheel draw without any skills leaves occupied tiles unlit',()=>{
+  const {battle}=scenario([['guard',200,320]],[['orc',800,320]]);
+  const [frame]=playbackFrames(step(battle));
+  const draw=frame.moments.find(moment=>moment.phase==='停盘');
+  assert.deepEqual(draw.focus,['0-0','1-0']);
+  assert.deepEqual(wheelCues(frame),[]);
+  assert.equal(actorFeedback(frame.moments).size,0);
+});
+
+test('replay can use the recorded roll length across cadence changes',()=>{
+  const run=scenario([['guard',300,320]],[['orc',700,320]]);
+  const earlier=step(run.battle,{tickLimit:6});
+  commitRoll(run,earlier);
+  const restored=JSON.parse(JSON.stringify(run));
+  const checkpoint=restored.history[0];
+  const ticks=restored.battle.runtime.tick-checkpoint.runtime.tick;
+  assert.equal(ticks,6);
+  assert.deepEqual(step(checkpoint,{tickLimit:ticks}),earlier);
+  assert.equal(playbackFrames(step(checkpoint)).length,10);
 });

@@ -200,16 +200,15 @@ test('only a cleared field from round two ends the battle',()=>{
 test('a guard gains two shield in its attack event, only for itself',()=>{
   const b=field(['guard','archer'],['orc']);
   b.units.forEach(u=>u.field=false);
-  const first=step(b);
-  assert.ok(first.next.units.every(u=>u.shield===0));
-  assert.equal(first.events.some(e=>e.action==='attack'),false);
+  const {events}=fightFrom(b,2);
+  const deployment=events.find(e=>e.phase==='召唤');
+  assert.ok(deployment.state.units.every(u=>u.shield===0));
 
-  const second=step(first.next);
-  const hit=second.events.find(e=>e.source==='0-0');
+  const hit=events.find(e=>e.action==='attack'&&e.source==='0-0');
   assert.equal(hit?.shieldGain,2);
   assert.equal(hit.state.units.find(u=>u.id==='0-0').shield,2);
   assert.equal(hit.state.units.find(u=>u.id==='0-1').shield,0);
-  assert.equal(second.events.some(e=>e.phase==='联动'&&e.focus[0]==='0-0'),false);
+  assert.equal(events.some(e=>e.phase==='联动'&&e.focus[0]==='0-0'),false);
 });
 
 test('growth follows individual allies across battles, including allies that fell',()=>{
@@ -248,7 +247,10 @@ test('freshly summoned archer grows once when touching multiple guards',()=>{
   assert.ok(gains[0].focus.length>=3);
   assert.equal(gains[0].state.units.find(u=>u.kind==='archer').bonus,1);
   assert.equal(next.units.find(u=>u.kind==='archer').bonus,1);
-  assert.equal(events.some(e=>e.action==='attack'),false);
+  const hit=events.find(e=>e.action==='attack'&&e.source===gains[0].source);
+  assert.ok(hit);
+  assert.ok(events.indexOf(hit)>events.indexOf(gains[0]));
+  assert.equal(hit.damage,4);
 });
 
 
@@ -408,12 +410,13 @@ test('entry bonuses reach the correct deployed humans, including diagonal neighb
     assert.ok(sword.valueTargets.includes('0-2'));
     assert.ok(!sword.valueTargets.includes('0-1'));
     assert.ok(!sword.valueTargets.includes('0-3'));
-    const archer=next.units[2];
+    const deployed=events.findLast(e=>e.phase==='召唤').state.units;
+    const archer=deployed[2];
     assert.equal(currentAttack(archer),5);
     assert.equal(archer.hp,10);
     assert.equal(maxHealth(archer),10);
-    assert.equal(next.units[3].hp,3);
-    assert.equal(next.units[4].hp,12);
+    assert.equal(deployed[3].hp,3);
+    assert.equal(deployed[4].hp,12);
     assert.ok(step(next).events.every(e=>e.phase!=='召唤'));
     return;
   }
@@ -565,7 +568,8 @@ test('a drawn surge grows all live adjacent allies including diagonals and is sp
     for(const piece of roll.next.units.filter(u=>u.side===0)){
       assert.equal(piece.bonus,targets.includes(piece.id)?2:0);
       assert.equal(maxHealth(piece),units.page.hp+(targets.includes(piece.id)?2:0));
-      assert.equal(piece.hp,piece.id==='0-0'?0:maxHealth(piece));
+      const enchanted=cast.state.units.find(unit=>unit.id===piece.id);
+      assert.equal(enchanted.hp,piece.id==='0-0'?0:maxHealth(piece));
     }
     assert.deepEqual(step(checkpoint),roll);
     commitRoll(r,{...roll,outcome:'胜利'});
@@ -725,7 +729,7 @@ test('cast history grows future wizard entries across reload, recruitment and ba
   const entry=second.events.find(e=>e.phase==='召唤'&&e.source==='0-0');
   assert.equal(entry.value,'+4/+4');
   assert.equal(second.next.spellCasts,3);
-  for(const unit of second.next.units.filter(u=>entry.valueTargets.includes(u.id))){
+  for(const unit of entry.state.units.filter(u=>entry.valueTargets.includes(u.id))){
     assert.equal(unit.hp,units.page.hp+4);
     assert.equal(unit.bonus,0);
     assert.equal(unit.healthBonus,0);

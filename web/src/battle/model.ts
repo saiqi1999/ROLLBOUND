@@ -22,8 +22,7 @@ export const COMBAT = {
   width:1000,
   height:640,
   separation:62,
-  openingTicks:3,
-  ticksPerRoll:6,
+  ticksPerRoll:10,
 } as const;
 
 const melee={speed:64,range:112,windup:2,recover:7};

@@ -32,8 +32,7 @@ export function wheelCues(frame:PlaybackFrame|undefined){
   for(const moment of frame?.moments??[]){
     const {phase,spell,action,originRoll,valueTargets,focus}=moment;
     if(!focus.length)continue;
-    if(phase==='停盘')cues.push({moment,motion:'draw'});
-    else if(spell)cues.push({moment,motion:'cast'});
+    if(spell)cues.push({moment,motion:'cast'});
     else if(action==='blocked')cues.push({moment,motion:'shake'});
     else if((phase==='联动'&&originRoll===frame?.state.round)||
       (valueTargets?.length&&(phase==='召唤'||phase==='阵亡'||phase==='复活')))cues.push({moment,motion:'orbit'});

@@ -306,9 +306,9 @@ function schedule(reset=false){
     tick();
   },remaining/speed);
 }
-function preparePlayback(battle:Battle){
+function preparePlayback(battle:Battle,tickLimit?:number){
   playbackStart=battle;
-  pending=step(battle);
+  pending=step(battle,{tickLimit});
   frames=playbackFrames(pending);
   index=0;
 }
@@ -420,7 +420,10 @@ app.addEventListener('click',event=>{
       modal('战斗记录','<ol>'+lines.map(l=>'<li>'+l+'</li>').join('')+'</ol>'+(lines.length?'':'<p>第一摇即将开始。</p>'));break;
     }
     case 'replay':{
-      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);const checkpoint=run.history[round];preparePlayback(checkpoint);replay=true;paused=false;battleShell();schedule(true);break;
+      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);
+      const checkpoint=run.history[round],end=run.history[round+1]??run.battle!;
+      preparePlayback(checkpoint,end.runtime.tick-checkpoint.runtime.tick);
+      replay=true;paused=false;battleShell();schedule(true);break;
     }
   }
 });

@@ -113,7 +113,10 @@ function fieldOutcome(battle:Battle):Outcome|undefined{
   if(!enemies)return '胜利';
 }
 
-export function step(start:Battle,{captureEvents=true}={}){
+export function step(start:Battle,{
+  captureEvents=true,
+  tickLimit=COMBAT.ticksPerRoll,
+}:{captureEvents?:boolean;tickLimit?:number}={}){
   const battle=structuredClone(start),events:Moment[]=[],ticks:CombatTick[]=[];
   const byId=new Map(battle.units.map(unit=>[unit.id,unit]));
   const record:RecordMoment=(phase,text,focus=[],detail={})=>{
@@ -154,9 +157,8 @@ export function step(start:Battle,{captureEvents=true}={}){
     if(neighbors.length)queueSkill(battle,unit,neighbors);
   }
 
-  const limit=battle.round===1?COMBAT.openingTicks:COMBAT.ticksPerRoll;
   let result=fieldOutcome(battle);
-  for(let i=0;i<limit&&!result;i++){
+  for(let i=0;i<tickLimit&&!result;i++){
     const from=events.length;
     advanceCombatTick(battle,{
       skill:effects.skill,
