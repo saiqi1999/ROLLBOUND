@@ -18,7 +18,7 @@ function read():Run{
   }catch{}
   return newRun(getSeed());
 }
-let run=read(), selected=0, timer=0, paused=false, speed=1, index=0, pending:ReturnType<typeof step>|undefined;
+let run=read(), timer=0, paused=false, speed=1, index=0, pending:ReturnType<typeof step>|undefined;
 let startedAt=0,remaining=0;
 let frames:PlaybackFrame[]=[],playbackStart:Battle|undefined;
 let wheelRound=-1;
@@ -74,9 +74,6 @@ function team(kinds:Kind[],growth?:Pick<Run,'attackGrowth'|'healthGrowth'>,boost
   });
   return [...groups.values()].map(({kind,attack,health,count})=>'<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+'">'+art(kind)+'<span>'+units[kind].name+'</span><span>⚔ '+attack+' '+heart+' '+health+'</span><b>×'+count+'</b></button>').join('');
 }
-function landscape(k:Kind){
-  return '<div class="diorama"><canvas aria-hidden="true" data-scene="'+k+'"></canvas><div class="party">'+art(k,'lead')+'</div></div>';
-}
 function spellInventory(){
   const owned=run.spells??[];
   if(!owned.length)return '';
@@ -84,26 +81,54 @@ function spellInventory(){
     '<button class="roster-unit" data-spell="'+kind+'">'+spellArt(kind)+'<span>'+spells[kind].name+'</span><b>×'+owned.filter(s=>s===kind).length+'</b></button>'
   ).join('')+'</div></div>';
 }
+function paintShopPurchases(){
+  app.querySelector('#shop-gold')!.textContent=String(run.gold);
+  app.querySelector<HTMLButtonElement>('[data-act="refresh"]')!.disabled=run.gold<REFRESH_COST;
+  for(const button of app.querySelectorAll<HTMLButtonElement>('[data-buy-index]')){
+    const offer=run.offers[Number(button.dataset.buyIndex)];
+    const action=offer.spell?'购买':'招募';
+    const state=offer.sold?'sold':run.gold<offer.price?'short':'ready';
+    const label=state==='sold'?'已'+action:state==='short'?'金币不足':action;
+    button.disabled=state!=='ready';
+    button.dataset.state=state;
+    button.closest('.offer')!.classList.toggle('sold',offer.sold);
+    button.innerHTML='<span>'+label+'</span>'+(offer.sold?'':'<span class="offer-cost" aria-hidden="true">'+coin+offer.price+'</span>');
+    button.setAttribute('aria-label',offer.sold?label+' '+offer.title:
+      (state==='short'?'金币不足，':'')+action+' '+offer.title+' · '+offer.price+' 金币');
+  }
+  app.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3>'+
+    '<div class="roster">'+team(run.roster,run)+'</div>'+spellInventory();
+}
+
 function shopView(){
-  const selectedOffer=run.offers[selected],remain=run.gold-selectedOffer.price;
   const encounter=encounters[run.stage];
-  const offers=run.offers.map((offer,i)=>{
-    const s=selected===i,spell=offer.spell,unit=offer.kinds[0];
-    const visual=spell?'<div class="diorama spell-diorama"><div class="party">'+spellArt(spell,'lead')+'</div></div>':landscape(unit);
-    const stats=spell?'<span class="unit-tags">一次性法术</span>':unitTags(unit)+'　⚔ '+units[unit].atk+'　'+heart+' '+units[unit].hp;
+  const offers=run.offers.map((offer,index)=>{
+    const spell=offer.spell,unit=offer.kinds[0];
+    const artButton=spell?'data-spell="'+spell+'"':'data-kind="'+unit+'"';
+    const backdrop=spell?'':'<canvas aria-hidden="true" data-scene="'+unit+'"></canvas>';
+    const portrait=spell?spellArt(spell,'lead'):art(unit,'lead');
+    const stats=spell?'<span class="unit-tags">一次性法术</span>':unitTags(unit)+
+      '<span class="offer-stats" aria-label="攻击 '+units[unit].atk+'，生命 '+units[unit].hp+'"><span>⚔ '+units[unit].atk+
+      '</span><span class="offer-health">'+heart+' '+units[unit].hp+'</span></span>';
     const description=spell?spells[spell].text:units[unit].text;
-    const state=offer.sold?(spell?'已购买':'已招募'):(spell?'首次摇到时施放':'单枚招募');
-    return '<button class="offer '+(s?'selected ':'')+(offer.sold?'sold':'')+'" data-offer="'+i+'" aria-pressed="'+s+'">'+visual+
-      '<div class="cardbody"><div class="cardhead"><h2>'+offer.title+'</h2><span class="price">'+coin+offer.price+'</span></div>'+
-      '<div class="statline">'+stats+'</div><p>'+description+'</p>'+(spell?'':wizardPreview(unit))+'<div class="cardfoot"><span>'+state+'</span><span>'+(s?'◆ 已选中':'◇ 选择')+'</span></div></div></button>';
+    return '<article class="offer" aria-labelledby="offer-title-'+index+'">'+
+      '<button type="button" class="offer-art'+(spell?' spell-diorama':'')+'" '+artButton+' aria-label="查看 '+offer.title+' 详情">'+
+      backdrop+'<span class="party">'+portrait+'</span><span class="offer-info" aria-hidden="true">ⓘ</span></button>'+
+      '<div class="cardbody"><h2 id="offer-title-'+index+'">'+offer.title+'</h2>'+
+      '<div class="offer-meta">'+stats+'</div><p class="offer-effect">'+description+'</p>'+
+      (spell?'':wizardPreview(unit))+'<button type="button" class="gold offer-buy" data-buy-index="'+index+'"></button></div></article>';
   }).join('');
-  const purchase=selectedOffer.spell?
-    '<small>法术预览</small><b>'+selectedOffer.title+'</b><span>首次摇到时施放并消耗。</span>'
-    :'<small>招募预览</small><b>'+selectedOffer.kinds.map(k=>units[k].name).join(' · ')+'</b><span>阵容 '+run.roster.length+' → '+(run.roster.length+(selectedOffer.sold?0:selectedOffer.kinds.length))+' 枚</span>';
-  const buyLabel=selectedOffer.spell?'购买':'招募';
-  app.innerHTML=header()+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+' / '+encounters.length+'</div><h1>'+encounter.camp+'营地'+'</h1><p>招募棋子，备战'+encounter.name+'。</p></div><div class="shop-tools"><div class="purse">'+coin+'<strong>'+run.gold+'</strong><span>金币</span></div><button class="quiet refresh" data-act="refresh" '+(run.gold<REFRESH_COST?'disabled':'')+'>刷新 · '+REFRESH_COST+' 金币</button><button class="quiet removal-entry" data-act="manage-removal">移除标记 · '+removalMarkers(run)+'</button></div></div><div class="offers">'+offers+'</div>'
-    +'<div class="purchase"><div>'+purchase+'</div><button class="gold" data-act="buy" '+(selectedOffer.sold||remain<0?'disabled':'')+'>'+(selectedOffer.sold?'已'+buyLabel:remain<0?'还差 '+(-remain)+' 金币':buyLabel+' · '+selectedOffer.price+' 金币')+'</button></div><div class="loadout"><div><h3>我的阵容 <small>'+run.roster.length+' 枚</small></h3><div class="roster">'+team(run.roster,run)+'</div>'+spellInventory()+'</div><div><h3>下战对手 <small>'+encounter.name+'</small></h3><div class="roster enemy">'+team(encounter.units,undefined,encounter)+'</div></div></div><div class="depart"><span>'+ (run.stage<encounters.length-1?'剩余金币带入下一间商店':'最后一间商店')+'</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
-  for(const c of app.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(c,c.dataset.scene!);
+  app.innerHTML=header()+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+' / '+encounters.length+
+    '</div><h1>'+encounter.camp+'营地</h1></div><div class="shop-tools"><div class="purse">'+coin+
+    '<strong id="shop-gold"></strong><span>金币</span></div><button class="quiet refresh" data-act="refresh">刷新 · '+REFRESH_COST+
+    ' 金币</button><button class="quiet removal-entry" data-act="manage-removal">移除标记 · '+removalMarkers(run)+'</button></div></div>'+
+    '<div class="offers">'+offers+'</div><p id="purchase-status" class="sr-only" role="status"></p>'+
+    '<div class="loadout"><div id="shop-roster"></div><div><h3>下战对手 <small>'+encounter.name+'</small></h3>'+
+    '<div class="roster enemy">'+team(encounter.units,undefined,encounter)+'</div></div></div><div class="depart"><span>'+
+    (run.stage<encounters.length-1?'剩余金币带入下一间商店':'最后一间商店')+
+    '</span><button class="primary" data-act="fight">开始第 '+(run.stage+1)+' 战</button></div></section>';
+  paintShopPurchases();
+  for(const canvas of app.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(canvas,canvas.dataset.scene!);
 }
 function removalView(){
   const markers=removalMarkers(run);
@@ -335,7 +360,19 @@ app.addEventListener('click',event=>{
     modal(spells[kind].name,spellArt(kind)+'<p>'+spells[kind].text+'</p><p>首次摇到时施放并消耗。</p>');
     return;
   }
-  if(el.dataset.offer!==undefined){selected=Number(el.dataset.offer);shopView();return;}
+  if(el.dataset.buyIndex!==undefined){
+    const index=Number(el.dataset.buyIndex);
+    if(buy(run,index)){
+      const offer=run.offers[index];
+      const details=el.closest('.offer')?.querySelector<HTMLButtonElement>('.offer-art');
+      const keepFocus=document.activeElement===el;
+      save();
+      paintShopPurchases();
+      if(keepFocus)details?.focus({preventScroll:true});
+      app.querySelector('#purchase-status')!.textContent=(offer.spell?'已购买 ':'已招募 ')+offer.title+'，剩余 '+run.gold+' 金币。';
+    }
+    return;
+  }
   if(el.dataset.removeIndex!==undefined&&removalOpen){
     removalSelection=Number(el.dataset.removeIndex);
     removalNotice='';
@@ -345,8 +382,14 @@ app.addEventListener('click',event=>{
   }
   switch(el.dataset.act){
     case 'rules':modal('战斗规则',ruleText);break;
-    case 'buy':if(buy(run,selected)){save();shopView();}break;
-    case 'refresh':if(refreshShop(run)){selected=0;save();shopView();}break;
+    case 'refresh':
+      if(refreshShop(run)){
+        const keepFocus=document.activeElement===el;
+        save();
+        shopView();
+        if(keepFocus)app.querySelector<HTMLButtonElement>('[data-act="refresh"]:enabled,.offer-art')?.focus({preventScroll:true});
+      }
+      break;
     case 'manage-removal':
       if(run.phase==='shop'){removalOpen=true;render();app.querySelector<HTMLElement>('[data-act="back-shop"]')?.focus();}
       break;
@@ -370,8 +413,8 @@ app.addEventListener('click',event=>{
     case 'step':paused=true;stopTimer();tick();break;
     case 'speed':stopTimer();speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
     case 'skip':fastFinish();break;
-    case 'advance':advance(run);selected=0;save();render();break;
-    case 'reset':run=newRun(getSeed());selected=0;save();render();break;
+    case 'advance':advance(run);save();render();break;
+    case 'reset':run=newRun(getSeed());save();render();break;
     case 'log':{
       const lines=[...run.log,...(pending&&!replay?pending.events.slice(0,currentFrame()?.until??0).filter(e=>e.phase!=='移动').map(e=>'第'+e.state.round+'摇 · '+e.text):[])];
       modal('战斗记录','<ol>'+lines.map(l=>'<li>'+l+'</li>').join('')+'</ol>'+(lines.length?'':'<p>第一摇即将开始。</p>'));break;
