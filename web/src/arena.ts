@@ -222,7 +222,7 @@ class Stage extends Phaser.Scene {
     sprite.setInteractive().on('pointerdown',()=>{
       const current=view.unit;
       document.dispatchEvent(new CustomEvent('unit-info',{
-        detail:{kind:current.kind,name:units[current.kind].name,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield,orcKills:current.orcKills},
+        detail:{kind:current.kind,name:units[current.kind].name,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield,temporary:current.temporary},
       }));
     });
     sprite.on(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>{

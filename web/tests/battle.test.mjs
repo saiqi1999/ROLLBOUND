@@ -128,21 +128,20 @@ test('removing a specific copy preserves the surviving units’ growth after rel
   assert.equal(recruit.healthBonus,0);
 });
 
-test('spending a marker on a slime grows the remaining roster once and keeps each orc’s kills',()=>{
+test('spending a marker on a one-gold slime grows the roster and evolves an orc at six attack',()=>{
   const run=newRun(17);
+  assert.equal(unitOffer('slime').price,1);
   run.roster=['slime','orc','archer','slime'];
-  run.attackGrowth={'0-2':3};
+  run.attackGrowth={'0-1':1,'0-2':3};
   run.healthGrowth={'0-2':1};
-  run.orcKills={'0-1':1};
   assert.equal(removeUnit(run,0),false);
-  assert.deepEqual(run.attackGrowth,{'0-2':3});
+  assert.deepEqual(run.attackGrowth,{'0-1':1,'0-2':3});
   run.stage=2;
   run.results=['胜利','胜利'];
   assert.ok(removeUnit(run,0));
-  assert.deepEqual(run.roster,['orc','archer','slime']);
-  assert.deepEqual(run.attackGrowth,{'0-0':2,'0-1':5,'0-2':2});
+  assert.deepEqual(run.roster,['armoredOrc','archer','slime']);
+  assert.deepEqual(run.attackGrowth,{'0-0':3,'0-1':5,'0-2':2});
   assert.deepEqual(run.healthGrowth,{'0-0':2,'0-1':3,'0-2':2});
-  assert.deepEqual(run.orcKills,{'0-0':1});
   assert.equal(removeUnit(run,2),false);
 
   const reloaded=loadRun(JSON.parse(JSON.stringify(run)));
@@ -150,7 +149,8 @@ test('spending a marker on a slime grows the remaining roster once and keeps eac
   assert.ok(buy(reloaded,0));
   assert.ok(startBattle(reloaded));
   const [orc,archer,slime,soldier]=reloaded.battle.units;
-  assert.equal(orc.orcKills,1);
+  assert.equal(currentAttack(orc),6);
+  assert.equal(maxHealth(orc),26);
   assert.equal(currentAttack(archer),8);
   assert.equal(maxHealth(archer),10);
   assert.equal(slime.healthBonus,2);
@@ -195,7 +195,8 @@ test('diagonal pair adds one attack; physician heals the eligible neighbor',()=>
     const heal=out.events.find(e=>e.action==='heal');
     assert.equal(heal?.source,'0-2');
     assert.equal(heal.target,'0-0');
-    assert.equal(heal.state.units[0].hp,11);
+    assert.equal(heal.value,'+4');
+    assert.equal(heal.state.units[0].hp,12);
     const growth=out.events.find(e=>e.action==='empower'&&e.source==='0-1');
     assert.equal(growth?.target,'0-1');
     assert.equal(currentAttack(growth.state.units[1]),4);
@@ -204,8 +205,17 @@ test('diagonal pair adds one attack; physician heals the eligible neighbor',()=>
   assert.fail('missing diagonal sample');
 });
 
+test('a physician restores twelve life to an eligible injured neighbor',()=>{
+  const battle=field(['medic','armoredOrc'],['guard']);
+  const [medic,orc]=battle.units;
+  orc.hp=1;
+  const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
+  assert.ok(effects.skill(medic,{neighbors:[orc.id],sequence:0,originRoll:1}));
+  assert.equal(orc.hp,13);
+});
+
 test('read each wheel by rows for links and resolve every neighbor in one beat',()=>{
-  const b=field(['guard','guard','archer','archer','guard','archer','archer','archer','guard'],['orc','bone','bone','orc']);
+  const b=field(['guard','guard','archer','archer','guard','archer','archer','archer','guard'],['guard','archer','archer','guard']);
   for(let seed=0;seed<15;seed++){
     b.rng=seed;
     const {next,events}=step(b);
@@ -218,8 +228,7 @@ test('read each wheel by rows for links and resolve every neighbor in one beat',
     for(const e of links){
       const source=b.units.find(u=>u.id===e.focus[0]);
       const grid=next.boards[source.side];
-      const other={archer:'guard',bone:'orc'}[source.kind];
-      const neighbors=grid.filter((id,i)=>id&&adjacent(i,grid.indexOf(source.id))&&b.units.find(u=>u.id===id).kind===other);
+      const neighbors=grid.filter((id,i)=>id&&adjacent(i,grid.indexOf(source.id))&&b.units.find(u=>u.id===id).kind==='guard');
       assert.deepEqual(e.focus,[source.id,...neighbors]);
     }
   }
@@ -427,7 +436,7 @@ test('every shop including the opening has three different recruit offers and on
 });
 
 test('buying a necromancer adds two distinct skeletons, including from an older shop save',()=>{
-  const {orcKills,...previous}=newRun(19);
+  const previous={...newRun(19),orcKills:{'0-1':1}};
   previous.offers=[{...unitOffer('king'),title:'暮王',kinds:['king']}];
   const run=loadRun(previous);
   assert.equal(run.offers[0].title,'亡灵法师');
@@ -441,86 +450,155 @@ test('buying a necromancer adds two distinct skeletons, including from an older 
   assert.equal(new Set(allies.map(unit=>unit.id)).size,3);
 });
 
-test('the same orc evolves on its second kill across battles and keeps its growth',()=>{
-  let run=newRun(27);
-  run.roster=['orc','orc'];
-  run.attackGrowth={'0-0':2};
-  run.healthGrowth={'0-0':2};
-  function winWithOrc(){
-    assert.ok(startBattle(run));
-    const battle=run.battle;
-    const [killer,teammate,enemy]=battle.units;
-    battle.units=[killer,teammate,enemy];
-    for(const unit of battle.units){unit.field=true;spawnActor(battle,unit);}
-    killer.hp-=3;
-    enemy.hp=1;
-    place(battle,{[killer.id]:[420,307],[teammate.id]:[245,400],[enemy.id]:[510,307]});
-    Object.assign(battle.runtime.actors[killer.id],{phase:'windup',readyAt:1,targetId:enemy.id});
-    battle.round=1;
-    const result=step(battle,{tickLimit:1});
-    assert.equal(result.outcome,'胜利');
-    commitRoll(run,result);
-    return result;
-  }
+test('an unsold slime in a prior save uses its one-gold price',()=>{
+  const saved=newRun(19);
+  saved.offers=[{...unitOffer('slime'),price:3}];
+  const loaded=loadRun(saved);
+  assert.equal(loaded.offers[0].price,1);
+  assert.ok(buy(loaded,0));
+  assert.equal(loaded.gold,9);
+  assert.deepEqual(loaded.roster,['slime']);
+});
 
-  assert.equal(winWithOrc().events.some(event=>event.phase==='进化'),false);
-  assert.deepEqual(run.orcKills,{'0-0':1});
-  advance(run);
-  run=loadRun(JSON.parse(JSON.stringify(run)));
-  const evolution=winWithOrc().events.find(event=>event.phase==='进化');
-  assert.equal(evolution.source,'0-0');
-  const [promoted,teammate]=run.battle.units;
-  assert.equal(promoted.id,'0-0');
-  assert.equal(promoted.kind,'armoredOrc');
-  assert.ok(hasGuardian(promoted.kind));
+test('orc evolution requires more than five attack and carries the form into the next fight',()=>{
+  const run=newRun(27);
+  run.roster=['orc','orc'];
+  assert.ok(startBattle(run));
+  run.battle=field(run.roster,['guard']);
+  const [first,second]=run.battle.units;
+  first.bonus=2;
+  second.bonus=1;
+  second.healthBonus=2;
+  second.battleAttackBonus=2;
+  second.hp=9;
+  const result=step(run.battle,{tickLimit:0});
+  assert.deepEqual(result.next.units.slice(0,2).map(u=>u.kind),['orc','armoredOrc']);
+  assert.deepEqual(result.events.filter(event=>event.phase==='进化').map(event=>event.source),[second.id]);
+  const promoted=result.next.units[1];
+  assert.equal(promoted.id,second.id);
+  assert.equal(currentAttack(promoted),6);
   assert.equal(promoted.hp,maxHealth(promoted)-3);
-  assert.equal(currentAttack(promoted),5);
-  assert.equal(teammate.kind,'orc');
-  assert.deepEqual(run.roster,['armoredOrc','orc']);
-  assert.deepEqual(run.orcKills,{});
+  assert.ok(hasGuardian(promoted.kind));
+  commitRoll(run,{...result,outcome:'胜利'});
+  assert.deepEqual(run.roster,['orc','armoredOrc']);
   advance(run);
   assert.ok(startBattle(run));
-  assert.equal(run.battle.units[0].kind,'armoredOrc');
-  assert.equal(maxHealth(run.battle.units[0]),16);
+  assert.equal(run.battle.units[1].kind,'armoredOrc');
+  assert.equal(currentAttack(run.battle.units[1]),4);
+  assert.equal(maxHealth(run.battle.units[1]),26);
 });
 
-test('an orc earns kill credit for a templar’s final death after it has revived',()=>{
-  const battle=field(['orc'],['templar']);
-  const [orc,templar]=battle.units;
+test('armored orcs evolve with three living wheel neighbors, including diagonal neighbors',()=>{
+  const battle=field(['armoredOrc','orc','orc','orc'],['guard']);
+  for(let seed=0;seed<120;seed++){
+    battle.rng=Math.imul(seed,0x9e3779b1)>>>0;
+    const result=step(battle,{tickLimit:1});
+    const board=result.next.boards[0];
+    const index=board.indexOf('0-0');
+    const orcs=board.filter((id,i)=>id&&adjacent(index,i));
+    const evolution=result.events.find(event=>event.phase==='进化');
+    if(orcs.length<3){
+      assert.equal(evolution,undefined);
+      continue;
+    }
+    const hasDiagonal=orcs.some(id=>{
+      const slot=board.indexOf(id);
+      return slot%3!==index%3&&Math.floor(slot/3)!==Math.floor(index/3);
+    });
+    if(!hasDiagonal)continue;
+    assert.equal(evolution.originRoll,result.next.round);
+    assert.deepEqual(evolution.focus,['0-0',...orcs]);
+    assert.equal(result.next.units[0].kind,'orcRider');
+    assert.equal(hasGuardian(result.next.units[0].kind),false);
+    const corpse=battle.units[3];
+    corpse.hp=0;
+    corpse.field=false;
+    assert.equal(step(battle,{tickLimit:1}).events.some(event=>event.phase==='进化'),false);
+    return;
+  }
+  assert.fail('missing a formation with three neighbors');
+});
+
+test('a rider gains permanent stats for a templar’s final death after it has revived',()=>{
+  const battle=field(['orcRider'],['templar']);
+  const [rider,templar]=battle.units;
   const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
-  orc.orcKills=1;
   templar.hp=1;
-  effects.attack(orc,templar);
+  effects.attack(rider,templar);
   assert.equal(templar.revived,true);
-  assert.equal(orc.kind,'orc');
-  assert.equal(orc.orcKills,1);
+  assert.equal(rider.bonus,0);
   templar.hp=1;
-  effects.attack(orc,templar);
+  effects.attack(rider,templar,true);
   assert.equal(templar.hp,0);
-  assert.equal(orc.kind,'armoredOrc');
+  assert.equal(rider.bonus,1);
+  assert.equal(rider.healthBonus,1);
 });
 
-test('armored orc attacks grow only living allied orcs in the field during this battle',()=>{
-  const battle=field(['armoredOrc','orc','orc','orc','soldier','bone'],['orc']);
-  const [armored,orc,corpse,bench,soldier,bone,enemy]=battle.units;
-  corpse.hp=0;corpse.field=false;
-  bench.field=false;
+test('one skeleton death leaves two corpses and only buffs living allied undead archers once',()=>{
+  const battle=field(['page','bone','bone','guard'],['bone','orc']);
+  const [skeleton,archer,reserve,guard,enemyArcher,enemy]=battle.units;
+  reserve.field=false;
+  guard.hp=1;
   const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
-  assert.deepEqual(effects.skillCandidates(bone,[armored.id]),[armored.id]);
-  effects.attack(armored,enemy);
-  assert.equal(enemy.hp,7);
-  effects.attack(armored,enemy);
-  assert.equal(enemy.hp,3);
-  for(const unit of [armored,orc]){
-    assert.equal(unit.battleAttackBonus,2);
-    assert.equal(maxHealth(unit),units[unit.kind].hp+2);
-    assert.equal(unit.bonus,0);
-    assert.equal(unit.healthBonus,0);
+  effects.attack(enemy,guard);
+  assert.equal(currentAttack(archer),2);
+  effects.attack(enemy,skeleton);
+  const corpses=battle.units.filter(unit=>unit.kind==='page'&&unit.hp===0);
+  assert.equal(corpses.length,2);
+  assert.deepEqual(corpses.map(unit=>unit.temporary),[undefined,true]);
+  assert.ok(!battle.runtime.actors[corpses[1].id]);
+  assert.equal(currentAttack(archer),5);
+  assert.equal(currentAttack(reserve),2);
+  assert.equal(currentAttack(enemyArcher),2);
+  assert.equal(archer.bonus,0);
+  const draw=step(battle,{tickLimit:0}).next.boards[0];
+  for(const corpse of corpses)assert.ok(draw.includes(corpse.id));
+});
+
+test('armored skeleton death deploys up to nine and keeps temporary pieces out of the expedition roster',()=>{
+  const run=newRun(44);
+  run.roster=['armoredSkeleton',...Array(8).fill('guard')];
+  assert.ok(startBattle(run));
+  run.battle=field(run.roster,['orc']);
+  const battle=run.battle;
+  const armor=battle.units[0],enemy=battle.units.at(-1);
+  const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
+  armor.hp=1;
+  effects.attack(enemy,armor);
+  const skeletons=battle.units.filter(unit=>unit.temporary);
+  assert.equal(skeletons.length,3);
+  assert.ok(skeletons.every(unit=>unit.kind==='page'&&unit.hp===3));
+  assert.equal(skeletons.filter(unit=>unit.field).length,1);
+  assert.equal(battle.units.filter(unit=>unit.side===0&&unit.field&&unit.hp>0).length,9);
+  battle.spells=[{id:'spell-0',kind:'recruit'}];
+  battle.boards[0][0]='spell-0';
+  effects.castSpells();
+  const recruit=battle.units.at(-1);
+  assert.equal(recruit.id,'0-9');
+  assert.equal(new Set(battle.units.map(unit=>unit.id)).size,battle.units.length);
+  commitRoll(run,{next:{...battle,round:battle.round+1},events:[],outcome:'胜利'});
+  assert.deepEqual(run.roster,['armoredSkeleton',...Array(8).fill('guard'),recruit.kind]);
+  assert.equal(run.attackGrowth['0-9'],3);
+  advance(run);
+  assert.ok(startBattle(run));
+  assert.ok(run.battle.units.every(unit=>!unit.temporary));
+  assert.equal(run.battle.units.find(unit=>unit.id==='0-9').bonus,3);
+});
+
+test('a bat grants one deterministic random spell on purchase, including after reload',()=>{
+  const offered=newRun(30);
+  offered.offers=[unitOffer('bat')];
+  const run=loadRun(JSON.parse(JSON.stringify(offered)));
+  for(const candidate of [offered,run]){
+    assert.ok(buy(candidate,0));
+    assert.equal(buy(candidate,0),false);
+    assert.deepEqual(candidate.roster,['bat']);
+    assert.equal(candidate.spells.length,1);
+    assert.ok(Object.hasOwn(spells,candidate.spells[0]));
   }
-  for(const unit of [corpse,bench,soldier,bone,enemy]){
-    assert.equal(unit.battleAttackBonus,undefined);
-    assert.equal(unit.battleHealthBonus,undefined);
-  }
+  assert.deepEqual(offered.spells,run.spells);
+  assert.ok(startBattle(run));
+  assert.deepEqual(run.battle.spells.map(spell=>spell.kind),run.spells);
 });
 
 test('refresh costs one gold, restocks, survives reload, and resets at the next shop',()=>{

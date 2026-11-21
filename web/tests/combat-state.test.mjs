@@ -93,15 +93,13 @@ test('a waiting link is dropped if its original neighbor dies and a later hit ca
   assert.ok(!events.some(e=>e.phase==='联动'&&e.source===archer.id));
 });
 
-test('bone link grants one hit of bonus damage and movement stays outside other fighters',()=>{
+test('ranged attacks leave enough space for fighters to move without overlapping',()=>{
   const {battle}=scenario([['bone',340,320],['orc',273,320]], [['guard',570,322]]);
   const [bone,,guard]=battle.units;
   guard.hp=160;
-  queueSkill(battle,bone,['0-1']);
   const first=step(battle);
   const hit=first.events.find(e=>e.action==='attack'&&e.source===bone.id);
-  assert.equal(hit?.value,'−4');
-  assert.equal(hit.state.units[0].nextAttackBonus,undefined);
+  assert.equal(hit?.value,'−2');
   const guardActor=battle.runtime.actors[guard.id];
   const approaching=battle.runtime.actors['0-1'];
   assert.ok(distance(guardActor.position,approaching.position)>profile('orc').range);
@@ -121,6 +119,24 @@ test('wheel, targeting and effect random streams are independent',()=>{
   const base=step(battle),changed=step(alternate);
   assert.deepEqual(base.events[0].state.boards,changed.events[0].state.boards);
   assert.equal(base.next.rng,changed.next.rng);
+});
+
+test('a rider’s extra strike retargets a live enemy and uses the permanent gain from its first kill',()=>{
+  const run=scenario([['orcRider',450,310]],[['page',550,310],['orc',468,410]]);
+  const {battle}=run;
+  const [rider,skeleton,orc]=battle.units;
+  Object.assign(battle.runtime.actors[rider.id],{phase:'windup',readyAt:1,targetId:skeleton.id});
+  const result=step(battle,{tickLimit:1});
+  const attacks=result.events.filter(event=>event.action==='attack'&&event.source===rider.id);
+  assert.deepEqual(attacks.map(event=>[event.target,event.damage,event.followUp]),[
+    [skeleton.id,3,undefined],
+    [orc.id,4,true],
+  ]);
+  assert.equal(result.next.units.find(unit=>unit.id===orc.id).hp,6);
+  assert.equal(frameMessage(playbackFrames(result)[0]).phase,'连击');
+  commitRoll(run,result);
+  assert.equal(run.attackGrowth[rider.id],1);
+  assert.equal(run.healthGrowth[rider.id],1);
 });
 
 

@@ -10,10 +10,11 @@ export function deployed(unit:Unit){
   return unit.field&&unit.hp>0;
 }
 
-export function chooseTarget(fighter:Fighter,live:Fighter[],clock:CombatRuntime){
+export function chooseTarget(fighter:Fighter,live:Fighter[],clock:CombatRuntime,reachable?:(target:Fighter)=>boolean){
   const enemies=live.filter(other=>other.unit.side!==fighter.unit.side);
   const guards=enemies.filter(other=>hasGuardian(other.unit.kind));
-  const eligible=guards.length?guards:enemies;
+  const preferred=guards.length?guards:enemies;
+  const eligible=reachable?preferred.filter(reachable):preferred;
   return eligible.find(other=>other.unit.id===fighter.actor.targetId)??
     (eligible.length?pick(eligible,clock):undefined);
 }
@@ -44,7 +45,7 @@ export function recover(actor:Actor,readyAt:number){
 }
 
 export function currentAttack(unit:Unit){
-  return units[unit.kind].atk+unit.bonus+(unit.battleAttackBonus??0)+(unit.nextAttackBonus??0);
+  return units[unit.kind].atk+unit.bonus+(unit.battleAttackBonus??0);
 }
 
 export function maxHealth(unit:Unit){

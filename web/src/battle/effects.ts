@@ -1,10 +1,10 @@
-import {humanKinds,ORC_EVOLUTION_KILLS,RECRUIT_GAIN,spells,units,wizardEntryGain} from '../data.ts';
+import {humanKinds,canEvolveOrc,MEDIC_HEAL,ORC_RIDER_NEIGHBORS,ARMORED_SKELETON_SPAWNS,RECRUIT_GAIN,spells,units,wizardEntryGain,type Kind} from '../data.ts';
 import type {Battle,RecordMoment,Unit} from '../engine.ts';
-import {interruptActor,reviveActor} from './combat.ts';
+import {interruptActor,reviveActor,spawnActor} from './combat.ts';
 import type {WheelSkill} from './model.ts';
 import {pick} from './random.ts';
 import {currentAttack,deployed,grantBattleStats,grantPermanentStats,makeUnit,maxHealth} from './unit-state.ts';
-import {neighborSlots} from './wheel.ts';
+import {FIELD_LIMIT,neighborSlots} from './wheel.ts';
 
 export const label=(unit:Unit)=>(unit.side?'敌方':'我方')+units[unit.kind].name;
 const isHuman=(unit:Unit)=>deployed(unit)&&units[unit.kind].race==='human';
@@ -30,6 +30,24 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     for(const ally of allies)ally.shield+=3;
     buff(phase,source,allies,'使所有友方在场人类获得3点护甲。','+3 甲');
   };
+
+  function evolve(unit:Unit,kind:Kind,allies:Unit[]=[],originRoll?:number){
+    const name=label(unit);
+    unit.hp+=units[kind].hp-units[unit.kind].hp;
+    unit.kind=kind;
+    const actor=battle.runtime.actors[unit.id];
+    if(actor)actor.queue.length=0;
+    record('进化',name+'进化为'+units[kind].name+'。',[unit.id,...allies.map(ally=>ally.id)],
+      {source:unit.id,target:unit.id,originRoll,action:'empower',value:'进化'});
+  }
+
+  function evolveIfStrong(unit:Unit){
+    if(deployed(unit)&&canEvolveOrc(unit.kind,currentAttack(unit)))evolve(unit,'armoredOrc');
+  }
+
+  function evolveOrcs(){
+    for(const unit of battle.units)evolveIfStrong(unit);
+  }
 
   function enter(unit:Unit){
     if(unit.kind==='soldier'){
@@ -57,6 +75,15 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     interruptActor(battle,unit);
   }
 
+  function addTemporarySkeleton(source:Unit){
+    const skeleton=makeUnit('page',source.side,battle.units.length,0,0);
+    skeleton.id+='-temporary';
+    skeleton.temporary=true;
+    battle.units.push(skeleton);
+    byId.set(skeleton.id,skeleton);
+    return skeleton;
+  }
+
   function resolveLethalHit(unit:Unit){
     if(unit.kind==='templar'&&!unit.revived){
       record('阵亡',label(unit)+'倒下，即将复活。',[unit.id],{action:'death'});
@@ -71,6 +98,28 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     }
     record('阵亡',label(unit)+'阵亡，尸体留在轮盘池中。',[unit.id],{action:'death'});
     if(unit.kind==='axeman')grantHumanArmor(unit,'阵亡');
+    if(units[unit.kind].race==='undead'){
+      const archers=battle.units.filter(other=>other.side===unit.side&&other.kind==='bone'&&deployed(other));
+      for(const archer of archers)grantBattleStats(archer,3,0);
+      buff('阵亡',unit,archers,'阵亡，使友方在场骷髅弓箭手获得+3攻击力。','+3 攻','empower');
+    }
+    if(unit.kind==='page'){
+      const corpse=addTemporarySkeleton(unit);
+      corpse.hp=0;
+      record('阵亡',label(unit)+'留下了额外一具骷髅兵尸体。',[corpse.id],{source:unit.id});
+    }
+    if(unit.kind==='armoredSkeleton'){
+      const live=battle.units.filter(other=>other.side===unit.side&&deployed(other)).length;
+      const skeletons=Array.from({length:ARMORED_SKELETON_SPAWNS},(_,index)=>{
+        const skeleton=addTemporarySkeleton(unit);
+        if(live+index<FIELD_LIMIT){
+          skeleton.field=true;
+          spawnActor(battle,skeleton);
+        }
+        return skeleton;
+      });
+      record('召唤',label(unit)+'招来'+skeletons.length+'个临时骷髅兵。',skeletons.map(skeleton=>skeleton.id),{source:unit.id});
+    }
     return true;
   }
 
@@ -88,6 +137,7 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
         const ids=targets.map(unit=>unit.id);
         const text=targets.length?'使'+targets.length+'名相邻单位永久获得+2/+2。':'没有相邻的在场友方单位。';
         record('法术',name+' · '+text,[source,...ids],{spell:spell.kind,source,value:'+2/+2',valueTargets:ids});
+        for(const unit of targets)evolveIfStrong(unit);
       }else if(spell.kind==='fireball'){
         const targets=battle.units.filter(unit=>unit.side===1&&deployed(unit));
         const target=targets.length?pick(targets,random):undefined;
@@ -100,7 +150,7 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
         }else record('法术',name+' · 没有在场敌方单位。',[source],{spell:spell.kind,source});
       }else{
         const kind=pick(humanKinds,random);
-        const count=battle.units.filter(unit=>unit.side===0).length;
+        const count=battle.units.filter(unit=>unit.side===0&&!unit.temporary).length;
         battle.units.push(makeUnit(kind,0,count,RECRUIT_GAIN,RECRUIT_GAIN));
         record('法术',name+' · '+units[kind].name+'加入战队，永久获得+'+RECRUIT_GAIN+'/+'+RECRUIT_GAIN+'。',[source],{spell:spell.kind,source});
       }
@@ -118,7 +168,10 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     switch(unit.kind){
       case 'king': return nearby.filter(isCorpse).map(other=>other.id);
       case 'archer': return nearby.filter(other=>deployed(other)&&other.kind==='guard').map(other=>other.id);
-      case 'bone': return nearby.filter(isOrc).map(other=>other.id);
+      case 'armoredOrc': {
+        const orcs=nearby.filter(isOrc);
+        return orcs.length>=ORC_RIDER_NEIGHBORS?orcs.map(other=>other.id):[];
+      }
       case 'medic': return nearby.filter(deployed).map(other=>other.id);
       default: return [];
     }
@@ -129,6 +182,12 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     const linked:RecordMoment=(phase,text,focus,details)=>record(phase,label(unit)+text,focus,{
       source:unit.id,originRoll:order.originRoll,...details,
     });
+    if(unit.kind==='armoredOrc'){
+      const orcs=nearby.filter(isOrc);
+      if(orcs.length<ORC_RIDER_NEIGHBORS)return false;
+      evolve(unit,'orcRider',orcs,order.originRoll);
+      return true;
+    }
     if(unit.kind==='lancer'){
       if(!order.neighbors.includes(null)&&!nearby.some(other=>other.corpseConsumed))return false;
       grantBattleStats(unit,2,1);
@@ -155,54 +214,37 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
       const candidates=living.filter(other=>other.hp<maxHealth(other));
       if(!candidates.length)return false;
       const target=pick(candidates,battle.runtime.effectRandom);
-      const amount=Math.min(3,maxHealth(target)-target.hp);
+      const amount=Math.min(MEDIC_HEAL,maxHealth(target)-target.hp);
       target.hp+=amount;
       linked('联动','为'+units[target.kind].name+'恢复'+amount+'点生命。',[unit.id,target.id],
         {action:'heal',target:target.id,value:'+'+amount,valueTargets:[target.id]});
       return true;
     }
-    if(!living.length)return false;
-    if(unit.kind==='archer'){
+    if(unit.kind==='archer'&&living.length){
       grantPermanentStats(unit,1,0);
       linked('联动','邻接木盾卫士，永久获得+1攻击力。',[unit.id,...living.map(other=>other.id)],
         {action:'empower',target:unit.id,value:'+1 攻',valueTargets:[unit.id]});
-    }else{
-      unit.nextAttackBonus=2;
-      linked('联动','邻接兽人，下一次普攻伤害+2。',[unit.id,...living.map(other=>other.id)],
-        {value:'+2 攻',valueTargets:[unit.id]});
+      return true;
     }
-    return true;
+    return false;
   }
 
-  function attack(unit:Unit,target:Unit){
+  function attack(unit:Unit,target:Unit,followUp?:true){
     const damage=currentAttack(unit);
-    delete unit.nextAttackBonus;
     const shieldGain=unit.kind==='guard'?2:0;
     unit.shield+=shieldGain;
     const absorbed=Math.min(target.shield,damage);
     target.shield-=absorbed;
     target.hp=Math.max(0,target.hp-damage+absorbed);
     if(target.hp===0)fall(target);
-    record('攻击',label(unit)+'攻击'+units[target.kind].name+'，造成'+damage+'点伤害'+(shieldGain?'，自身获得2点护盾。':'。'),
-      [unit.id,target.id],{action:'attack',source:unit.id,target:target.id,value:'−'+damage,damage,shieldGain});
+    record('攻击',label(unit)+(followUp?'连击':'攻击')+units[target.kind].name+'，造成'+damage+'点伤害'+(shieldGain?'，自身获得2点护盾。':'。'),
+      [unit.id,target.id],{action:'attack',source:unit.id,target:target.id,value:'−'+damage,damage,shieldGain,followUp});
     const killed=target.hp===0&&resolveLethalHit(target);
-    if(unit.kind==='armoredOrc'){
-      const allies=battle.units.filter(other=>other.side===unit.side&&isOrc(other));
-      for(const ally of allies)grantBattleStats(ally,1,1);
-      buff('攻击',unit,allies,'使所有友方在场兽人获得+1/+1。','+1/+1','empower');
-    }
-    if(killed&&unit.kind==='orc'){
-      unit.orcKills=(unit.orcKills??0)+1;
-      if(unit.orcKills>=ORC_EVOLUTION_KILLS){
-        const name=label(unit);
-        unit.kind='armoredOrc';
-        unit.hp+=units.armoredOrc.hp-units.orc.hp;
-        delete unit.orcKills;
-        record('进化',name+'进化为'+units.armoredOrc.name+'。',[unit.id],
-          {source:unit.id,target:unit.id,action:'empower',value:'进化'});
-      }
+    if(killed&&unit.kind==='orcRider'){
+      grantPermanentStats(unit,1,1);
+      buff('攻击',unit,[unit],'击杀敌人，永久获得+1/+1。','+1/+1','empower');
     }
   }
 
-  return {enter,castSpells,skillCandidates,skill,attack};
+  return {enter,castSpells,evolveOrcs,skillCandidates,skill,attack};
 }

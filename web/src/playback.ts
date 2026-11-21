@@ -45,6 +45,8 @@ export function frameMessage(frame:PlaybackFrame|undefined){
   const evolution=moments.find(moment=>moment.phase==='进化');
   if(evolution)return {phase:evolution.phase,text:evolution.text};
   const attacks=moments.filter(moment=>moment.action==='attack');
+  const followUp=attacks.find(moment=>moment.followUp);
+  if(followUp)return {phase:'连击',text:followUp.text};
   if(attacks.length>1)return {phase:'攻击',text:attacks.length+' 名单位出手。'};
   const moment=attacks[0]??moments.find(moment=>moment.spell)??
     moments.find(moment=>moment.phase!=='移动'&&moment.phase!=='停盘')??moments[0];
@@ -82,6 +84,7 @@ export function actorFeedback(moments:Moment[]){
       const attacker=feedback(source),victim=feedback(target);
       attacker.attack=true;
       attacker.shield+=moment.shieldGain??0;
+      if(moment.followUp)attacker.values.push('连击');
       victim.hit=true;
       victim.damage+=moment.damage??0;
       continue;

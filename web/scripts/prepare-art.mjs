@@ -8,12 +8,14 @@ await mkdir(dest,{recursive:true});
 const names={
   guard:'Knight',archer:'Archer',medic:'Priest',king:'Necromancer',page:'Skeleton',orc:'Orc',bone:'Skeleton Archer',
   soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
-  armoredOrc:'Armored Orc',slime:'Slime'
+  armoredOrc:'Armored Orc',slime:'Slime',orcRider:'Orc rider',armoredSkeleton:'Armored Skeleton',bat:'Bat'
 };
 const manifest={};
 for(const [id,name] of Object.entries(names)){
   manifest[id]={};
-  for(const [move,suffix] of Object.entries({idle:'Idle',walk:['lancer','templar'].includes(id)?'Walk01':'Walk',attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death',...(id==='medic'?{heal:'Heal'}:{})})){
+  const idle=id==='bat'?'Flying':'Idle';
+  const walk=id==='bat'?'Flying':['lancer','templar'].includes(id)?'Walk01':'Walk';
+  for(const [move,suffix] of Object.entries({idle,walk,attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death',...(id==='medic'?{heal:'Heal'}:{})})){
     const src=PNG.sync.read(await readFile(path.join(root,name,name+' with shadows',name+'_'+suffix+'.png')));
     if(src.height!==100||src.width%100)throw Error('Invalid sheet: '+name+' '+move);
     const count=src.width/100, frame=80;
@@ -28,11 +30,12 @@ for(const [id,name] of Object.entries(names)){
       await writeFile(path.join(dest,id+'.png'),PNG.sync.write(badge));
     }
     if(move==='death'){
-      const badge=new PNG({width:40,height:36});
+      const width=id==='orcRider'?54:40;
+      const badge=new PNG({width,height:36});
       // The Necromancer dissolves. Use its last recognizable pose before only particles remain.
       const pose=id==='king'?5:count-1;
-      const left=id==='swordsman'?42:id==='lancer'?35:30;
-      PNG.bitblt(src,badge,pose*100+left,28,40,36,0,0);
+      const left=id==='orcRider'?27:id==='swordsman'?42:id==='lancer'?35:30;
+      PNG.bitblt(src,badge,pose*100+left,28,width,36,0,0);
       await writeFile(path.join(dest,id+'-corpse.png'),PNG.sync.write(badge));
     }
   }

@@ -33,7 +33,6 @@ export function interruptActor(battle:Battle,unit:Unit){
   actor.queue=[];
   actor.targetId=undefined;
   actor.phase='dead';
-  delete unit.nextAttackBonus;
 }
 
 export function reviveActor(battle:Battle,unit:Unit){
@@ -49,7 +48,7 @@ export function queueSkill(battle:Battle,unit:Unit,neighbors:(string|null)[]){
 type CombatEffects = {
   skill:(unit:Unit,order:WheelSkill)=>boolean;
   motion:()=>void;
-  attack:(attacker:Unit,target:Unit)=>void;
+  attack:(attacker:Unit,target:Unit,followUp?:true)=>void;
 };
 
 export function advanceCombatTick(battle:Battle,effects:CombatEffects){
@@ -111,5 +110,14 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
     turnTowards(actor,target.actor);
     recover(actor,tick+profile(unit.kind).recover);
     effects.attack(unit,target.unit);
+    if(unit.kind==='orcRider'){
+      const live=battle.units.filter(deployed).map(unit=>({unit,actor:clock.actors[unit.id]}));
+      const followUp=chooseTarget(fighter,live,clock,enemy=>withinRange(fighter,enemy));
+      if(followUp){
+        actor.targetId=followUp.unit.id;
+        turnTowards(actor,followUp.actor);
+        effects.attack(unit,followUp.unit,true);
+      }
+    }
   }
 }

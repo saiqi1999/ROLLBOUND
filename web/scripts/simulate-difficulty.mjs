@@ -1,7 +1,7 @@
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {encounters,REFRESH_COST,REQUIRED_WINS} from '../src/data.ts';
-import {advance,buy,canStartBattle,commitRoll,newRun,refreshShop,startBattle,step} from '../src/engine.ts';
+import {advance,buy,canStartBattle,commitRoll,newRun,refreshShop,removalMarkers,removeUnit,startBattle,step} from '../src/engine.ts';
 import {pick,shuffle} from '../src/battle/random.ts';
 
 function mixSeed(seed) {
@@ -45,7 +45,7 @@ export function spendShopGold(run) {
   }
 }
 
-export function simulateDifficulty(count,offset=100000) {
+export function simulateDifficulty(count,offset=100000,{removeSlimes=false}={}) {
   const stages=encounters.map(()=>({reached:0,wins:0,losses:0,draws:0,unspent:0,spentAll:0,roster:0,refreshes:0}));
   let clears=0;
   for(let index=0;index<count;index++){
@@ -53,6 +53,12 @@ export function simulateDifficulty(count,offset=100000) {
     while(run.phase==='shop'){
       const stage=stages[run.stage];
       spendShopGold(run);
+      if(removeSlimes){
+        while(run.roster.length>1&&removalMarkers(run)){
+          const index=run.roster.indexOf('slime');
+          if(index<0||!removeUnit(run,index))break;
+        }
+      }
       stage.reached++;
       stage.unspent+=run.gold;
       stage.spentAll+=Number(run.gold===0);
@@ -72,14 +78,17 @@ export function simulateDifficulty(count,offset=100000) {
 }
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const count=Number(process.argv[2]??5000),offset=Number(process.argv[3]??100000);
-  if(!Number.isSafeInteger(count)||count<1||!Number.isSafeInteger(offset)||offset<0){
-    throw Error('Usage: node scripts/simulate-difficulty.mjs [positive sample count] [nonnegative seed offset]');
+  const [sample,seedOffset,policy]=process.argv.slice(2);
+  const count=Number(sample??5000),offset=Number(seedOffset??100000);
+  if(!Number.isSafeInteger(count)||count<1||!Number.isSafeInteger(offset)||offset<0||
+     (policy!==undefined&&policy!=='--remove-slimes')){
+    throw Error('Usage: node scripts/simulate-difficulty.mjs [positive sample count] [nonnegative seed offset] [--remove-slimes]');
   }
-  const report=simulateDifficulty(count,offset);
+  const removeSlimes=policy==='--remove-slimes';
+  const report=simulateDifficulty(count,offset,{removeSlimes});
   const percent=(n,d)=>d?(100*n/d).toFixed(1)+'%':'—';
   const mean=(n,d)=>d?(n/d).toFixed(2):'—';
-  console.log('样本 '+count+' · 种子偏移 '+offset);
+  console.log('样本 '+count+' · 种子偏移 '+offset+' · '+(removeSlimes?'优先移除史莱姆':'保留阵容'));
   console.table(report.stages.map((row,i)=>({
     '关卡':i+1,'发放金币':encounters[i].gold,'入关':row.reached,'胜':row.wins,'负':row.losses,'平':row.draws,
     '入关后胜率':percent(row.wins,row.reached),'平均余款':mean(row.unspent,row.reached),
