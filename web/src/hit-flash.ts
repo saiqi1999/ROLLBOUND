@@ -20,16 +20,24 @@ function whiteTexture(scene: Phaser.Scene, frame: Phaser.Textures.Frame) {
   return key;
 }
 
+export function clearHitFlash(sprite: Phaser.GameObjects.Sprite) {
+  activeFlashes.get(sprite)?.();
+}
+
 /** Briefly flashes a sprite's visible pixels white and fades back to its normal art. */
 export function flashHit(sprite: Phaser.GameObjects.Sprite, durationMs = 96) {
   if (!sprite.scene || !sprite.active) return;
-  activeFlashes.get(sprite)?.();
+  clearHitFlash(sprite);
   const scene = sprite.scene;
   const key = whiteTexture(scene, sprite.frame);
   if (!key) return;
 
   const overlay = scene.add.image(sprite.x, sprite.y, key).setDepth(sprite.depth);
-  scene.children.moveAbove(overlay, sprite);
+  const parent=sprite.parentContainer;
+  if(parent){
+    parent.add(overlay);
+    parent.moveAbove(overlay,sprite);
+  }else scene.children.moveAbove(overlay,sprite);
   let frame = sprite.frame;
   function followSprite() {
     if (frame !== sprite.frame) {

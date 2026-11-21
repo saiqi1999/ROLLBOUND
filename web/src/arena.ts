@@ -1,17 +1,31 @@
 import Phaser from 'phaser';
-import {ATTACK_MS} from './timing.ts';
-import {flashHit} from './hit-flash.ts';
+import {ATTACK_MS,EFFECT_MS,MOVE_MS} from './timing.ts';
+import {COMBAT} from './battle/model.ts';
+import {clearHitFlash,flashHit} from './hit-flash.ts';
 import {units,hasGuardian,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Moment,type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
-  Object.keys(units).map(k=>[k,k==='medic'?['idle','attack','death','heal']:['idle','attack','death']])
+  Object.keys(units).map(k=>[k,k==='medic'?['idle','walk','attack','death','heal']:['idle','walk','attack','death']])
 ) as Record<Kind,string[]>;
 const effectStills={heal:1,empower:1,surge:3,fireball:0,recruit:3} as const;
-const SPELL_MS=400;
-let scene:Stage|undefined, game:Phaser.Game|undefined, observer:ResizeObserver|undefined, latest:{b:Battle,e:Moment|undefined,speed:number}|undefined;
+type ActorView = {
+  root:Phaser.GameObjects.Container;
+  sprite:Phaser.GameObjects.Sprite;
+  ground:Phaser.GameObjects.Ellipse;
+  stats?:Phaser.GameObjects.Container;
+  statsKey?:string;
+  unit:Unit;
+};
+let scene:Stage|undefined,game:Phaser.Game|undefined,observer:ResizeObserver|undefined;
+let latest:{battle:Battle;moment:Moment|undefined}|undefined;
+let playing={speed:1,paused:false};
+
 class Stage extends Phaser.Scene {
   ready=false;
+  views=new Map<string,ActorView>();
+  feedback:Phaser.GameObjects.GameObject[]=[];
+
   preload(){
     this.load.json('frames',base+'frames.json');
     for(const [kind,moves] of Object.entries(actions))for(const move of moves){
@@ -23,86 +37,132 @@ class Stage extends Phaser.Scene {
     const frames=this.cache.json.get('frames');
     for(const [k,moves] of Object.entries(actions))for(const move of moves){
       const key=k+'-'+move;
-      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames[k][move]-1}),frameRate:move==='idle'?7:16,repeat:move==='idle'?-1:0});
+      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames[k][move]-1}),frameRate:move==='idle'?7:move==='walk'?12:16,repeat:move==='idle'||move==='walk'?-1:0});
     }
     for(const fx of Object.keys(effectStills)){
       const key='fx-'+fx;
-      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames.fx[fx]-1}),duration:SPELL_MS,repeat:0});
+      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames.fx[fx]-1}),duration:EFFECT_MS,repeat:0});
     }
-    this.ready=true;this.scale.on('resize',()=>{if(latest)this.paint(latest.b,latest.e,latest.speed);});
-    if(latest)this.paint(latest.b,latest.e,latest.speed);
+    this.ready=true;
+    this.scale.on('resize',()=>{if(latest)this.paint(latest.battle,latest.moment,true,false);});
+    if(latest)this.paint(latest.battle,latest.moment,true);
+    this.playback();
   }
-  paint(b:Battle,e:Moment|undefined,speed:number){
+
+  playback(){
     if(!this.ready)return;
-    this.tweens.killAll();this.children.removeAll(true);
-    const {width:w,height:h}=this.scale;
-    const combatants=b.units.filter(u=>u.field||
-      ((e?.action==='attack'||e?.spell==='fireball')&&e.target===u.id)||
-      (e?.action==='death'&&e.focus.includes(u.id)));
-    const positions=new Map<string,{x:number;y:number}>();
-    for(const side of [0,1]){
-      const team=combatants.filter(u=>u.side===side);
-      const cols=team.length>6?3:2,rows=Math.ceil(team.length/cols)||1;
-      team.forEach((u,i)=>{
-        const nx=.06+(.38/cols)*(i%cols+.5);
-        positions.set(u.id,{x:w*(side?1-nx:nx),y:16+(h-47)*(Math.floor(i/cols)+.59)/rows});
-      });
-    }
-    if(e?.phase==='联动'&&e.focus.length>1){
-      const p=positions.get(e.focus[0]),g=this.add.graphics().lineStyle(2,0xeac879,.8);
-      if(p)for(const id of e.focus.slice(1)){const q=positions.get(id);if(q)g.lineBetween(p.x,p.y,q.x,q.y);}
-    }
-    for(const u of combatants){
-      const pos=positions.get(u.id)!;
-      this.actor(u,pos.x,pos.y,e,w,h,combatants.filter(x=>x.side===u.side).length,speed);
-    }
-    if(e?.spell==='recruit')this.playEffect('recruit',w*.25,h*.46,Math.max(1,Math.min(w/135,3.6)),speed);
+    this.tweens.timeScale=playing.speed;
+    this.anims.globalTimeScale=playing.speed;
+    if(playing.paused&&!this.scene.isPaused())this.scene.pause();
+    if(!playing.paused&&this.scene.isPaused())this.scene.resume();
   }
-  playEffect(effect:keyof typeof effectStills,x:number,y:number,scale:number,speed:number){
+
+  paint(battle:Battle,moment:Moment|undefined,snap=false,showEffects=true){
+    if(!this.ready)return;
+    const {width,height}=this.scale;
+    const still=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scale=Math.max(.8,Math.min(width/225,height/109,2.75));
+    const visible=new Set<string>();
+    if(showEffects){
+      for(const effect of this.feedback)effect.destroy();
+      this.feedback=[];
+    }
+    for(const unit of battle.units){
+      const actor=battle.runtime.actors[unit.id];
+      if(!actor)continue;
+      const showingDeath=moment?.action==='death'&&moment.focus.includes(unit.id);
+      const hit=(moment?.action==='attack'||moment?.spell==='fireball')&&moment.target===unit.id;
+      if(!unit.field&&!showingDeath&&!hit)continue;
+      visible.add(unit.id);
+      const x=14+(width-28)*actor.position.x/COMBAT.width;
+      const y=25+(height-53)*actor.position.y/COMBAT.height;
+      const fresh=!this.views.has(unit.id);
+      const view=this.views.get(unit.id)??this.createActor(unit,x,y);
+      view.unit=unit;
+      const {root,sprite,ground}=view;
+      const moving=Math.hypot(root.x-x,root.y-y)>.05;
+      this.tweens.killTweensOf(root);
+      if(moving&&moment?.phase==='移动'&&!snap&&!still&&!playing.paused){
+        this.tweens.add({
+          targets:root,x,y,duration:MOVE_MS,
+          onUpdate:()=>{root.setDepth(root.y);},
+        });
+      }else root.setPosition(x,y).setDepth(y);
+      sprite.setScale(scale).setFlipX(actor.facing===-1);
+      ground.setSize(23*scale,5*scale);
+      const guarding=unit.hp>0&&hasGuardian(unit.kind);
+      const active=moment?.focus.includes(unit.id);
+      const marked=active&&moment?.action!=='attack'&&moment?.action!=='blocked';
+      const color=marked?0xf0cf89:guarding?0xadd5ef:unit.side?0xb48283:0x86b69b;
+      ground.setStrokeStyle(marked||guarding?2:1,color,marked||guarding?1:.45);
+      const attack=currentAttack(unit),statsKey=[unit.hp,maxHealth(unit),attack,unit.shield,scale].join('/');
+      if(view.statsKey!==statsKey){
+        view.stats?.destroy();
+        view.stats=this.drawStats(unit,attack,Math.max(30,(width-28)*COMBAT.separation/COMBAT.width+12));
+        root.add(view.stats);
+        view.statsKey=statsKey;
+      }
+      if(!showEffects&&!fresh)continue;
+      let move=showingDeath?'death':moving&&moment?.phase==='移动'?'walk':'idle';
+      if(moment?.source===unit.id&&moment.action==='attack')move='attack';
+      if(moment?.source===unit.id&&moment.action==='heal')move='heal';
+      const key=unit.kind+'-'+move;
+      if(still||playing.paused){
+        sprite.stop().setTexture(key,move==='idle'||move==='walk'?0:Math.min(2,this.textures.get(key).frameTotal-2));
+      }else if(move==='attack'||move==='heal'){
+        sprite.play({key,duration:move==='attack'?ATTACK_MS:EFFECT_MS});
+      }else sprite.play(key,true);
+      if(playing.paused||still)clearHitFlash(sprite);
+      else if(hit)flashHit(sprite);
+      const effect=moment?.spell??(moment?.action==='heal'||moment?.action==='empower'?moment.action:undefined);
+      if(effect&&(moment?.target===unit.id||moment?.valueTargets?.includes(unit.id))){
+        this.playEffect(effect,x,y+3,scale);
+      }
+      if(active&&moment?.value&&(moment.valueTargets?moment.valueTargets.includes(unit.id):hit||moment.phase!=='攻击')){
+        this.floatText(x,y-18*scale,moment.value,'#fff4bd');
+      }
+      if(moment?.source===unit.id&&moment.shieldGain){
+        this.floatText(x,y-18*scale,'+'+moment.shieldGain+' 盾','#acd5f0');
+      }
+    }
+    for(const [id,view] of this.views){
+      if(visible.has(id))continue;
+      this.tweens.killTweensOf(view.root);
+      view.root.destroy();
+      this.views.delete(id);
+    }
+    if(showEffects&&moment?.spell==='recruit')this.playEffect('recruit',width*.25,height*.46,scale);
+  }
+
+  createActor(unit:Unit,x:number,y:number){
+    const ground=this.add.ellipse(0,1,23,5,0x0c1413,.5);
+    const sprite=this.add.sprite(0,3,unit.kind+'-idle').setOrigin(.5,54/64);
+    const root=this.add.container(x,y,[ground,sprite]).setDepth(y);
+    const view:ActorView={root,sprite,ground,unit};
+    this.views.set(unit.id,view);
+    sprite.setInteractive().on('pointerdown',()=>{
+      const current=view.unit;
+      document.dispatchEvent(new CustomEvent('unit-info',{
+        detail:{kind:current.kind,name:units[current.kind].name,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield},
+      }));
+    });
+    return view;
+  }
+
+  playEffect(effect:keyof typeof effectStills,x:number,y:number,scale:number){
     const key='fx-'+effect;
-    const sprite=this.add.sprite(x,y,key).setOrigin(.5,.60).setScale(scale);
-    if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)sprite.setFrame(effectStills[effect]);
-    else sprite.play({key,duration:SPELL_MS/speed}).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>sprite.destroy());
+    const sprite=this.add.sprite(x,y,key).setDepth(this.scale.height+1).setOrigin(.5,.60).setScale(scale);
+    this.feedback.push(sprite);
+    if(playing.paused||window.matchMedia('(prefers-reduced-motion: reduce)').matches)sprite.setFrame(effectStills[effect]);
+    else sprite.play(key).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>sprite.setVisible(false));
   }
-  actor(u:Unit,x:number,y:number,e:Moment|undefined,w:number,h:number,count:number,speed:number){
-    const active=e?.focus.includes(u.id);
-    const action=e?.action;
-    const hit=(action==='attack'||e?.spell==='fireball')&&e?.target===u.id;
-    const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const scale=Math.max(.8,Math.min(w/(count>6?170:130),h/(Math.ceil(count/(count>6?3:2))*44+20),3.6));
-    const marked=active&&e?.action!=='attack';
-    const guarding=u.hp>0&&hasGuardian(u.kind);
-    const color=marked?0xf0cf89:guarding?0xadd5ef:u.side?0xb48283:0x86b69b;
-    this.add.ellipse(x,y+7,23*scale,5*scale,0x0c1413,.5).setStrokeStyle(marked||guarding?2:1,color,marked||guarding?1:.45);
-    let move='idle';
-    if(action==='death'&&active)move='death';
-    if(e?.source===u.id){
-      if(action==='attack')move='attack';
-      if(action==='heal')move='heal';
-    }
-    const key=u.kind+'-'+move;
-    const sprite=this.add.sprite(x,y+9,u.kind+'-idle').setOrigin(.5,54/64).setScale(scale).setFlipX(!!u.side);
-    if(!reducedMotion){
-      if(move==='attack')sprite.play({key,duration:ATTACK_MS/speed});
-      else if(move==='heal')sprite.play({key,duration:SPELL_MS/speed});
-      else sprite.play(key);
-    }
-    if(hit)flashHit(sprite,96/speed);
-    const effect=e?.spell??(action==='heal'||action==='empower'?action:undefined);
-    const receivesEffect=e?.target===u.id||e?.valueTargets?.includes(u.id);
-    if(effect&&receivesEffect)this.playEffect(effect,x,y+9,scale,speed);
-    const attack=currentAttack(u);
-    this.drawStats(u,attack,x,y+14,.38*w/(count>6?3:2));
-    if(active&&e?.value&&(e.valueTargets?e.valueTargets.includes(u.id):hit||e.phase!=='攻击')){
-      this.add.text(x,y-18*scale,e.value,{fontFamily:'sans-serif',fontSize:'13px',color:'#fff4bd',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
-    }
-    if(e?.source===u.id&&e.shieldGain){
-      this.add.text(x,y-18*scale,'+'+e.shieldGain+' 盾',{fontFamily:'sans-serif',fontSize:'13px',color:'#acd5f0',stroke:'#262b26',strokeThickness:3}).setOrigin(.5);
-    }
-    const name=units[u.kind as Kind].name;
-    sprite.setInteractive().on('pointerdown',()=>document.dispatchEvent(new CustomEvent('unit-info',{detail:{kind:u.kind,name,hp:u.hp,maxHp:maxHealth(u),atk:attack,shield:u.shield}})));
+
+  floatText(x:number,y:number,value:string,color:string){
+    const text=this.add.text(x,y,value,{fontFamily:'sans-serif',fontSize:'13px',color,stroke:'#262b26',strokeThickness:3});
+    this.feedback.push(text.setDepth(this.scale.height+2).setOrigin(.5));
   }
-  drawStats(unit:Unit,attack:number,x:number,y:number,spacing:number){
+
+  drawStats(unit:Unit,attack:number,spacing:number){
     const boosted=attack>units[unit.kind].atk;
     const hpColor=unit.hp<maxHealth(unit)?'#ff7077':'#ffffff';
     const attackColor=boosted?'#ffd27d':'#f3ecd9';
@@ -131,7 +191,7 @@ class Stage extends Phaser.Scene {
       icons.fillStyle(0x91bfdf);
       icons.fillRect(0,7,hpWidth*Math.min(1,unit.shield/12),2);
     }
-    this.add.container(x,y,[icons,hp,atk]).setScale(Math.min(1,(spacing-3)/width));
+    return this.add.container(0,10,[icons,hp,atk]).setScale(Math.min(1,(spacing-3)/width));
   }
 
 }
@@ -140,5 +200,16 @@ export function mountArena(parent:HTMLElement){
   game=new Phaser.Game({type:Phaser.CANVAS,parent,transparent:true,pixelArt:true,banner:false,audio:{noAudio:true},scene,scale:{width:parent.clientWidth,height:parent.clientHeight},fps:{target:30}});
   observer=new ResizeObserver(()=>{if(parent.clientWidth&&parent.clientHeight)game?.scale.resize(parent.clientWidth,parent.clientHeight);});observer.observe(parent);
 }
-export function paintArena(b:Battle,e:Moment|undefined,speed:number){latest={b,e,speed};scene?.paint(b,e,speed);}
-export function closeArena(){observer?.disconnect();observer=undefined;game?.destroy(true);game=undefined;scene=undefined;latest=undefined;}
+export function paintArena(battle:Battle,moment:Moment|undefined,speed:number,paused:boolean){
+  latest={battle,moment};
+  setArenaPlayback(speed,paused);
+  scene?.paint(battle,moment);
+}
+export function setArenaPlayback(speed:number,paused:boolean){
+  playing={speed,paused};
+  scene?.playback();
+}
+export function closeArena(){
+  observer?.disconnect();observer=undefined;
+  game?.destroy(true);game=undefined;scene=undefined;latest=undefined;
+}

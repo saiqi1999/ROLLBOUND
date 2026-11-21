@@ -1,12 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,shop,buy,refreshShop,removalMarkers,removeUnit,migrateExpedition,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
+import {adjacent,newRun,shop,buy,refreshShop,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,maxHealth,currentAttack} from '../src/engine.ts';
+import {spawnActor} from '../src/battle/combat.ts';
 import {encounters,units,unitKinds,spells,spellOffer,GOLD_REWARD,REFRESH_COST} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
-  r.battle.units=[ours,theirs].flatMap((team,side)=>team.map((kind,i)=>({id:side+'-'+i,kind,side,hp:units[kind].hp,shield:0,bonus:0,field:true})));
+  r.battle.units=[ours,theirs].flatMap((team,side)=>team.map((kind,i)=>({id:side+'-'+i,kind,side,hp:units[kind].hp,shield:0,bonus:0,healthBonus:0,field:true})));
+  r.battle.units.forEach(unit=>spawnActor(r.battle,unit));
   return r.battle;
 }
+function fightFrom(battle,rolls=8){
+  const events=[];
+  let result;
+  for(let i=0;i<rolls;i++){
+    result=step(battle);
+    events.push(...result.events);
+    if(result.outcome)break;
+    battle=result.next;
+  }
+  return {...result,events};
+}
+
+function place(battle,positions){
+  for(const [id,[x,y]] of Object.entries(positions))battle.runtime.actors[id].position={x,y};
+}
+
 test('an expedition resolves each battle reproducibly and automatically stops after a nonwin',()=>{
   for(let seed=0;seed<24;seed++){
     const r=newRun(seed);
@@ -14,9 +32,9 @@ test('an expedition resolves each battle reproducibly and automatically stops af
     assert.deepEqual(r.roster,['guard','guard','soldier']);
     assert.ok(buy(r,0));assert.equal(buy(r,0),false);assert.equal(r.roster.length,4);
     for(let i=0;i<7;i++){
-      assert.equal(r.stage,i);startBattle(r);assert.equal(r.battle.hp,undefined);
-      const first=step(r.battle);assert.deepEqual(first,step(r.battle));assert.equal(first.events.some(e=>e.phase==='攻击'),false);
-      assert.deepEqual(first.next,step(r.battle,'board',{captureEvents:false}).next);
+      assert.equal(r.stage,i);startBattle(r);
+      const first=step(r.battle);assert.deepEqual(first,step(r.battle));assert.ok(first.events.find(e=>e.phase==='召唤'));
+      assert.deepEqual(first.next,step(r.battle,{captureEvents:false}).next);
       for(let j=0;r.phase==='battle'&&j<101;j++)commitRoll(r,step(r.battle));
       if(r.results.at(-1)!=='胜利'){
         assert.equal(r.phase,'end');
@@ -100,45 +118,18 @@ test('removing a specific copy preserves the surviving units’ growth after rel
   assert.equal(recruit.healthBonus,0);
 });
 
-test('old saves derive their bank from completed victories and expire on recorded losses',()=>{
-  const r=newRun(3);
-  delete r.removalsUsed;
-  r.stage=4;
-  r.results=Array(4).fill('胜利');
-  migrateExpedition(r);
-  assert.equal(r.phase,'shop');
-  assert.equal(removalMarkers(r),2);
-  assert.ok(removeUnit(r,0));
-  migrateExpedition(r);
-  assert.equal(removalMarkers(r),1);
-  const previousLoss={...r,removalsUsed:undefined,results:['胜利','落败','胜利','胜利']};
-  migrateExpedition(previousLoss);
-  assert.equal(previousLoss.phase,'end');
-  assert.equal(previousLoss.results.length,4);
-  const completed={...r,removalsUsed:undefined,phase:'end',results:[...Array(6).fill('胜利'),'落败']};
-  migrateExpedition(completed);
-  assert.equal(completed.legacyClearRequirement,6);
-});
-test('eight neighbors, shuffled distinct instances, former replays omit corpses',()=>{
+test('eight neighbors and distinct wheel draws including corpses',()=>{
   assert.equal([0,1,2,3,4,5,6,7,8].filter(i=>adjacent(4,i)).length,8);
   assert.equal(adjacent(2,3),false);assert.equal(adjacent(0,4),true);
   const b=field(Array(12).fill('guard'),['orc']);b.units[0].hp=0;
-  delete b.corpseRules;
-  const board=step(b).next.boards[0];assert.equal(new Set(board).size,9);assert.ok(!board.includes('0-0'));
-});
-test('historical replays count dead pages and finish declared attacks',()=>{
-  const b=field(['king','page'],['king','page']);
-  delete b.immediateDeaths;
-  delete b.corpseRules;
-  b.units.filter(u=>u.kind==='page').forEach(u=>u.hp=1);
-  let found=false;
-  for(let seed=0;seed<100&&!found;seed++){
-    b.rng=seed;const out=step(b);
-    if(out.next.units.filter(u=>u.kind==='page'&&u.hp===0).length!==2)continue;
-    assert.equal(out.events.filter(e=>e.phase==='攻击').length,4);
-    assert.ok(out.next.units.filter(u=>u.kind==='king').every(u=>u.bonus===4));found=true;
+  b.units[0].field=false;b.runtime.actors['0-0'].phase='dead';
+  for(let seed=0;seed<20;seed++){
+    b.rng=seed;
+    const board=step(b).next.boards[0];
+    assert.equal(new Set(board).size,9);
+    if(board.includes('0-0'))return;
   }
-  assert.ok(found);
+  assert.fail('missing corpse draw');
 });
 test('diagonal pair adds one attack; physician heals the eligible neighbor',()=>{
   const b=field(['guard','archer','medic'],['orc']);b.units[0].hp=8;
@@ -151,25 +142,23 @@ test('diagonal pair adds one attack; physician heals the eligible neighbor',()=>
     assert.equal(heal.state.units[0].hp,11);
     const growth=out.events.find(e=>e.action==='empower'&&e.source==='0-1');
     assert.equal(growth?.target,'0-1');
-    assert.equal(out.events.find(e=>e.action==='attack'&&e.source==='0-1').value,'−4');
+    assert.equal(currentAttack(growth.state.units[1]),4);
     return;
   }
   assert.fail('missing diagonal sample');
 });
 
-test('read each wheel by rows for links and hits; resolve every neighbor in one beat',()=>{
+test('read each wheel by rows for links and resolve every neighbor in one beat',()=>{
   const b=field(['guard','guard','archer','archer','guard','archer','archer','archer','guard'],['orc','bone','bone','orc']);
   for(let seed=0;seed<15;seed++){
     b.rng=seed;
     const {next,events}=step(b);
     const order=next.boards.flat().filter(Boolean);
     const links=events.filter(e=>e.phase==='联动');
+    assert.ok(links.length>0);
     const positions=links.map(e=>order.indexOf(e.focus[0]));
     assert.deepEqual(positions,[...positions].sort((x,y)=>x-y));
     assert.equal(new Set(positions).size,positions.length);
-    const attacks=events.filter(e=>e.action==='attack').map(e=>order.indexOf(e.source));
-    assert.ok(attacks.length>0);
-    assert.deepEqual(attacks,[...new Set(attacks)].sort((x,y)=>x-y));
     for(const e of links){
       const source=b.units.find(u=>u.id===e.focus[0]);
       const grid=next.boards[source.side];
@@ -193,10 +182,19 @@ test('only a cleared field from round two ends the battle',()=>{
   b.units.forEach(u=>u.hp=1);
   assert.equal(step(b).outcome,'胜利');
 
-  const reserve=field(['page'],['page']);
+  const reserve=field([...Array(9).fill('page'),'guard'],['page']);
   reserve.round=2;
-  reserve.units[0].field=false;
-  assert.equal(outcome(reserve),'落败');
+  for(const unit of reserve.units.slice(0,10))unit.field=false;
+  reserve.units.slice(0,9).forEach(unit=>{unit.hp=0;reserve.runtime.actors[unit.id].phase='dead';});
+  for(let seed=0;seed<100;seed++){
+    reserve.rng=Math.imul(seed,0x9e3779b1)>>>0;
+    const outcome=step(reserve);
+    if(!outcome.next.boards[0].includes('0-9')){
+      assert.equal(outcome.outcome,'落败');
+      return;
+    }
+  }
+  assert.fail('no sample with the last reserve outside the wheel');
 });
 
 test('a guard gains two shield in its attack event, only for itself',()=>{
@@ -212,30 +210,6 @@ test('a guard gains two shield in its attack event, only for itself',()=>{
   assert.equal(hit.state.units.find(u=>u.id==='0-0').shield,2);
   assert.equal(hit.state.units.find(u=>u.id==='0-1').shield,0);
   assert.equal(second.events.some(e=>e.phase==='联动'&&e.focus[0]==='0-0'),false);
-});
-
-test('replays with hero health preserve their old victory and guard shield rules',()=>{
-  const b=field(['archer'],[]);
-  b.hp=[15,3];
-  delete b.immediateDeaths;
-  delete b.corpseRules;
-  assert.equal(step(b,'legacy').next.hp[1],0);
-  assert.equal(step(b,'legacy').outcome,'胜利');
-
-  const oldBoard=field(['guard','archer'],['page']);
-  oldBoard.hp=[15,15];
-  delete oldBoard.lastingGrowth;
-  delete oldBoard.immediateDeaths;
-  delete oldBoard.corpseRules;
-  for(let seed=0;seed<100;seed++){
-    oldBoard.rng=seed;
-    const roll=step(oldBoard,'legacy');
-    const shield=roll.events.find(e=>e.phase==='联动'&&e.focus.length===2&&e.focus[0]==='0-0');
-    if(!shield)continue;
-    assert.equal(shield.state.units[1].shield,2);
-    return;
-  }
-  assert.fail('missing adjacent legacy guard sample');
 });
 
 test('growth follows individual allies across battles, including allies that fell',()=>{
@@ -278,19 +252,25 @@ test('freshly summoned archer grows once when touching multiple guards',()=>{
 });
 
 
-test('a lethal hit immediately removes the target before another attack is chosen',()=>{
-  const b=field(['guard','archer'],['page','page']);
-  b.round=1;
-  b.units.filter(u=>u.side===1).forEach(u=>u.hp=1);
-  const roll=step(b);
-  const combat=roll.events.filter(e=>e.action==='attack'||e.action==='death');
-  assert.deepEqual(combat.map(e=>e.action),['attack','death','attack','death']);
-  const [firstHit,firstDeath,secondHit,secondDeath]=combat;
-  assert.notEqual(firstHit.target,secondHit.target);
-  assert.deepEqual(firstDeath.focus,[firstHit.target]);
-  assert.deepEqual(secondDeath.focus,[secondHit.target]);
-  assert.ok(combat.filter(e=>e.action==='attack').every(e=>e.source.startsWith('0-')));
-  assert.equal(firstHit.state.units.find(u=>u.id===firstHit.target).field,false);
+test('a lethal hit removes an enemy from pursuit and interrupts its charged strike',()=>{
+  const battle=field(['guard','page'],['page','page']);
+  battle.round=1;
+  place(battle,{'0-0':[370,320],'0-1':[380,420],'1-0':[460,320],'1-1':[480,420]});
+  for(const unit of battle.units.filter(u=>u.side===1))unit.hp=1;
+  for(const [id,actor] of Object.entries(battle.runtime.actors)){
+    actor.phase='windup';actor.readyAt=2;
+    actor.targetId=id==='0-0'||id==='0-1'?'1-0':'0-0';
+  }
+  const roll=fightFrom(battle);
+  const hits=roll.events.filter(e=>e.action==='attack');
+  const first=hits[0];
+  assert.equal(first.source,'0-0');
+  assert.equal(first.target,'1-0');
+  assert.equal(first.state.units.find(unit=>unit.id==='1-0').field,false);
+  assert.equal(first.state.runtime.actors['1-0'].phase,'dead');
+  assert.ok(!hits.some(e=>e.source==='1-0'));
+  assert.ok(!hits.slice(1).some(e=>e.target==='1-0'));
+  assert.ok(hits.some(e=>e.source==='0-1'&&e.target==='1-1'));
   assert.equal(roll.outcome,'胜利');
 });
 
@@ -352,7 +332,7 @@ test('the first adjacent king consumes every shared corpse once and grows before
     assert.equal(king.bonus,4);
     assert.equal(king.hp,12);
     assert.equal(maxHealth(king),16);
-    assert.equal(events.find(e=>e.action==='attack'&&e.source===king.id).value,'−7');
+    assert.equal(currentAttack(king),7);
     for(const id of corpseIds){
       assert.ok(gain.state.boards[0].includes(id));
       assert.equal(next.units.find(u=>u.id===id).corpseConsumed,true);
@@ -462,11 +442,13 @@ test('a guardian receives attacks first and axeman armor resolves on entry and d
   const first=step(b);
   const entry=first.events.find(e=>e.phase==='召唤'&&e.source===axe.id);
   assert.deepEqual(entry.valueTargets,[axe.id,archer.id]);
-  assert.ok(first.events.filter(e=>e.action==='attack'&&e.source.startsWith('0-')).every(e=>e.target===axe.id));
+  const acquired=fightFrom(first.next).events.find(e=>e.action==='attack'&&e.source.startsWith('0-'));
+  assert.equal(acquired.target,axe.id);
 
   axe.field=true;
   axe.hp=1;
-  const {events}=step(b);
+  place(b,{'0-0':[377,250],'0-1':[377,410],'1-0':[450,320],'1-1':[515,430],'1-2':[533,234]});
+  const {events}=fightFrom(b);
   const hits=events.filter(e=>e.action==='attack'&&e.source.startsWith('0-'));
   assert.equal(hits[0].target,axe.id);
   assert.notEqual(hits[1].target,axe.id);
@@ -503,9 +485,10 @@ test('a templar revives at its boosted max health, keeps guarding, then leaves a
   const [, , ,templar,archer,bone]=b.units;
   templar.hp=1;
   templar.battleHealthBonus=2;
-  const {next,events}=step(b);
+  place(b,{'0-0':[390,270],'0-1':[376,360],'0-2':[375,451],'1-0':[460,318],'1-1':[492,422],'1-2':[541,324]});
+  const {next,events}=fightFrom(b);
   const hits=events.filter(e=>e.action==='attack'&&e.source.startsWith('0-'));
-  assert.equal(hits.length,3);
+  assert.ok(hits.length>=3);
   assert.equal(hits[0].target,templar.id);
   assert.equal(hits[1].target,templar.id);
   assert.notEqual(hits[2].target,templar.id);
@@ -607,7 +590,7 @@ test('fireball selects live enemies at random regardless of guarding or armor an
   b.spells=[{id:'spell-0',kind:'fireball'}];
   const seen=new Set();
   for(let seed=0;seed<40;seed++){
-    b.rng=seed;
+    b.runtime.effectRandom.rng=Math.imul(seed,0x9e3779b1)>>>0;
     const roll=step(b);
     const cast=roll.events.find(e=>e.spell==='fireball');
     assert.ok(cast.target.startsWith('1-'));

@@ -24,7 +24,7 @@ function recruit(run) {
 
 function playFight(run) {
   startBattle(run);
-  while (run.phase === 'battle') commitRoll(run, step(run.battle, 'board', {captureEvents:false}));
+  while (run.phase === 'battle') commitRoll(run, step(run.battle, {captureEvents:false}));
   return run.results.at(-1) === '胜利';
 }
 

@@ -12,7 +12,7 @@ const names={
 const manifest={};
 for(const [id,name] of Object.entries(names)){
   manifest[id]={};
-  for(const [move,suffix] of Object.entries({idle:'Idle',attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death',...(id==='medic'?{heal:'Heal'}:{})})){
+  for(const [move,suffix] of Object.entries({idle:'Idle',walk:['lancer','templar'].includes(id)?'Walk01':'Walk',attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death',...(id==='medic'?{heal:'Heal'}:{})})){
     const src=PNG.sync.read(await readFile(path.join(root,name,name+' with shadows',name+'_'+suffix+'.png')));
     if(src.height!==100||src.width%100)throw Error('Invalid sheet: '+name+' '+move);
     const count=src.width/100, frame=80;

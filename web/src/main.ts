@@ -1,48 +1,25 @@
 import './style.css';
-import {ATTACK_MS,WHEEL_MOTION} from './timing.ts';
+import {momentDuration,WHEEL_MOTION} from './timing.ts';
 import {units,spells,encounters,races,hasGuardian,wizardEntryGain,GOLD_REWARD,REFRESH_COST,REQUIRED_WINS,type Kind,type SpellKind} from './data.ts';
-import {newRun,shop,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,migrateExpedition,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Run} from './engine.ts';
+import {newRun,shop,buy,refreshShop,earnedRemovalMarker,removalMarkers,removeUnit,startBattle,advance,step,commitRoll,currentAttack,maxHealth,FIELD_LIMIT,type Run} from './engine.ts';
+import {WHEEL_WIDTH} from './battle/wheel.ts';
 import {scenery} from './landscape.ts';
 import type * as Arena from './arena.ts';
-const key='rollbound.trial.v1',base=import.meta.env.BASE_URL+'art/';
+const key='rollbound.trial.v2',base=import.meta.env.BASE_URL+'art/';
 const app=document.querySelector<HTMLElement>('#app')!, dialog=document.querySelector<HTMLDialogElement>('#detail')!;
+app.style.setProperty('--wheel-width',String(WHEEL_WIDTH));
 const getSeed=()=>crypto.getRandomValues(new Uint32Array(1))[0];
 function read():Run{
   try{
     const saved:Run|null=JSON.parse(localStorage.getItem(key)??'null');
-    if(saved?.version===1&&Array.isArray(saved.roster)&&saved.roster.every(k=>k in units)&&encounters[saved.stage]&&Array.isArray(saved.history)){
-      if(saved.refreshes===undefined){
-        saved.refreshes=0;
-        if(saved.stage===2&&saved.phase!=='shop')saved.legacyThirdBattle=true;
-      }
-      migrateExpedition(saved);
-      if(saved.spellCasts===undefined){
-        const startingSpells=saved.history[0]?.spells?.length??0;
-        saved.spellCasts=Math.max(0,startingSpells-(saved.battle?.spells?.length??0));
-      }
-      if(saved.phase==='shop'&&(saved.offers.length!==4||saved.offers.filter(offer=>offer.spell).length!==1||saved.offers.some(offer=>!offer.spell&&offer.kinds.length!==1))){
-        saved.offers=shop(saved.seed,saved.stage,saved.refreshes);
-      }
-      // Continue the live battle under the current rules. Historical replay frames retain their rules.
-      if(saved.phase==='battle'&&saved.battle){
-        saved.battle.spellCasts??=saved.spellCasts??0;
-        delete saved.battle.hp;
-        saved.battle.lastingGrowth=true;
-        saved.battle.immediateDeaths=true;
-        if(!saved.battle.corpseRules){
-          for(const side of [0,1]){
-            const deployed=saved.battle.units.filter(u=>u.side===side&&u.field&&u.hp>0);
-            for(const u of deployed.slice(FIELD_LIMIT))u.field=false;
-          }
-          saved.battle.corpseRules=true;
-        }
-      }
-      return saved;
-    }
+    if(saved?.version===2&&Array.isArray(saved.roster)&&saved.roster.every(k=>Object.hasOwn(units,k))&&
+       encounters[saved.stage]&&Array.isArray(saved.history))return saved;
   }catch{}
   return newRun(getSeed());
 }
 let run=read(), selected=0, timer=0, paused=false, speed=1, index=0, pending:ReturnType<typeof step>|undefined;
+let startedAt=0,remaining=0;
+const wheelMarkup:string[]=[];
 let arena:typeof Arena|undefined, token=0,replay=false,resumeAfterDialog=false,saveWarning=false;
 let removalOpen=false, removalSelection:number|undefined, removalNotice='';
 function save(){try{localStorage.setItem(key,JSON.stringify(run));}catch{saveWarning=true;}}
@@ -50,19 +27,19 @@ const art=(k:Kind,cls='',corpse=false)=>'<img class="sprite '+cls+'" src="'+base
 const spellArt=(kind:SpellKind,cls='')=>'<img class="sprite '+cls+'" src="'+(kind==='recruit'?base+'spell-recruit.png':import.meta.env.BASE_URL+'spells/'+kind+'.png')+'" alt="">';
 const heart='♥', coin='<i class="coin" aria-hidden="true"></i>';
 const counts=(kinds:Kind[])=>Object.entries(kinds.reduce((a,k)=>(a[k]=(a[k]??0)+1,a),{} as Partial<Record<Kind,number>>)) as [Kind,number][];
-const opponentName=(stage:number)=>stage===2&&run.legacyThirdBattle?'暮色王庭':encounters[stage].name;
+const opponentName=(stage:number)=>encounters[stage].name;
 function header(){
   return '<header><div class="brand"><span class="brandmark" aria-hidden="true">◆</span><div><strong>ROLLBOUND</strong><small>轮 盘 战 记</small></div></div><nav aria-label="旅程">'+encounters.map((encounter,i)=>
-    '<span class="'+(i===run.stage?'now':i<run.stage?'past':'')+'" title="'+opponentName(i)+'"'+(run.stage===i?' aria-current="step"':'')+'><b data-total="'+encounters.length+'">0'+(i+1)+'</b><em>'+(i===2&&run.legacyThirdBattle?'王庭':encounter.camp)+'</em></span>'
+    '<span class="'+(i===run.stage?'now':i<run.stage?'past':'')+'" title="'+opponentName(i)+'"'+(run.stage===i?' aria-current="step"':'')+'><b data-total="'+encounters.length+'">0'+(i+1)+'</b><em>'+encounter.camp+'</em></span>'
   ).join('')+'</nav><button class="quiet iconbtn" data-act="rules" aria-label="玩法说明">?</button></header>';
 }
 function modal(title:string,html:string){
-  if(!dialog.open){resumeAfterDialog=run.phase==='battle'&&!paused;if(resumeAfterDialog)togglePause();}
+  if(!dialog.open){resumeAfterDialog=(replay||run.phase==='battle')&&!paused;if(resumeAfterDialog)togglePause();}
   document.querySelector('#dialog-inner')!.innerHTML='<h2>'+title+'</h2>'+html;
   if(!dialog.open)dialog.showModal();
 }
 document.querySelector('#close')!.addEventListener('click',()=>dialog.close());
-dialog.addEventListener('close',()=>{if(resumeAfterDialog&&paused&&run.phase==='battle')togglePause();resumeAfterDialog=false;});
+dialog.addEventListener('close',()=>{if(resumeAfterDialog&&paused&&(replay||run.phase==='battle'))togglePause();resumeAfterDialog=false;});
 function unitTags(kind:Kind){
   return '<span class="unit-tags">'+races[units[kind].race]+(hasGuardian(kind)?' · 守护':'')+'</span>';
 }
@@ -76,7 +53,7 @@ document.addEventListener('unit-info',((e:CustomEvent)=>{
   const v=e.detail;
   modal(v.name,unitTags(v.kind)+'<p>'+units[v.kind as Kind].text+'</p>'+wizardPreview(v.kind)+'<p>攻击 '+v.atk+'　生命 '+v.hp+'/'+v.maxHp+'　护甲 '+v.shield+'</p>');
 }) as EventListener);
-const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。进下一间商店时获得 '+GOLD_REWARD+' 金币，每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。单位首次上场时召唤，后续摇到时攻击。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。有守护敌人在场时，从存活的守护敌人中随机选目标，否则从所有在场的存活敌人中随机选。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，每摇结算完毕后，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
+const ruleText='<p>远征最多经过 '+encounters.length+' 间商店、'+encounters.length+' 场战斗。七战全胜即通关，落败或平局都会结束远征。第 2、4、6 战胜利时各获得 1 个移除标记，每个标记可以在商店移除一枚棋子。进下一间商店时获得 '+GOLD_REWARD+' 金币，每次刷新货架花费 '+REFRESH_COST+' 金币。每组货架随机提供三个单位和一个法术。</p><p>每摇随机抽取最多九枚单位或法术放入九宫格。法术在召唤结算后施放，一经摇出即永久消耗，未摇出的法术带入下一战。摇到候补单位时尝试召唤。已在场的单位会自行走位和普攻，轮盘相邻决定技能。双方各有九个出战位。场满时，摇到的待召唤棋子左右轻晃，继续等待出战。</p><p><b>相邻</b>包括横、竖和斜角。<b>守护</b>会吸引攻击。单位优先随机锁定一名守护敌人，进入射程后出手。生命降至0的单位立即退场，尸体留在轮盘中，占据抽取位。暮王可以消耗相邻尸体。第二摇起，场上单位全灭的一方落败。双方同时全灭则平局。</p><p>种族包括人类、兽人、亡灵和怪物。入场能力按盘面顺序结算，能影响同一摇成功登场的单位。新加入的人类能力提供的属性成长持续一场战斗。护甲与护盾共用数值，优先抵消伤害。下一战所有单位恢复至满血并清空护甲。见习弓手、暮王和魔力强化提供的永久加成跟随各自的棋子，保留至本局结束。</p>';
 function rosterStats(kind:Kind,index:number,growth?:Pick<Run,'attackGrowth'|'healthGrowth'>){
   const id='0-'+index;
   return {attack:units[kind].atk+(growth?.attackGrowth?.[id]??0),health:units[kind].hp+(growth?.healthGrowth?.[id]??0)};
@@ -141,9 +118,9 @@ function removalView(){
     +'<p class="removal-notice" role="status">'+removalNotice+'</p></section>';
 }
 function battleShell(){
-  const rev=++token;app.innerHTML=header()+'<section class="battle"><div class="battle-title"><div><small class="kicker">第 '+(run.stage+1)+' 战 / '+encounters.length+'</small><h1>'+opponentName(run.stage)+'</h1></div><div class="round" id="round"></div></div><div class="commanders"><span id="team0"></span><b>VS</b><span id="team1"></span></div><div class="theatre"><div id="wheel0" class="wheel"></div><div class="arena-wrap"><canvas id="scenery"></canvas><div id="arena" aria-label="自动战斗场面"></div></div><div id="wheel1" class="wheel enemy"></div></div><aside class="feed" aria-live="polite"><b id="phase"></b><span id="message"></span></aside><div class="controls"><button data-act="pause" id="pause"></button><button data-act="step">单步</button><button data-act="speed" id="speed"></button><button data-act="log">战报</button><button data-act="skip">'+(replay?'结束回看':'快速结算')+'</button></div></section>';
+  const rev=++token;wheelMarkup.length=0;app.innerHTML=header()+'<section class="battle"><div class="battle-title"><div><small class="kicker">第 '+(run.stage+1)+' 战 / '+encounters.length+'</small><h1>'+opponentName(run.stage)+'</h1></div><div class="round" id="round"></div></div><div class="commanders"><span id="team0"></span><b>VS</b><span id="team1"></span></div><div class="theatre"><div id="wheel0" class="wheel"></div><div class="arena-wrap"><canvas id="scenery"></canvas><div id="arena" aria-label="自动战斗场面"></div></div><div id="wheel1" class="wheel enemy"></div></div><aside class="feed" aria-live="polite"><b id="phase"></b><span id="message"></span></aside><div class="controls"><button data-act="pause" id="pause"></button><button data-act="step">单步</button><button data-act="speed" id="speed"></button><button data-act="log">战报</button><button data-act="skip">'+(replay?'结束回看':'快速结算')+'</button></div></section>';
   scenery(document.querySelector('#scenery')!,'guard');const host=document.querySelector<HTMLElement>('#arena')!;
-  void import('./arena.ts').then(a=>{if(token!==rev)return;arena=a;a.mountArena(host);a.paintArena(currentState(),currentEvent(),speed);});
+  void import('./arena.ts').then(a=>{if(token!==rev)return;arena=a;a.mountArena(host);a.paintArena(currentState(),currentEvent(),speed,paused);});
   paint();
 }
 function currentEvent(){return pending&&index>0?pending.events[index-1]:undefined;}
@@ -151,12 +128,13 @@ function currentState(){return currentEvent()?.state??run.battle!;}
 function paint(){
   const e=currentEvent(),b=currentState();
   const buff=e?.valueTargets?.length&&(e.phase==='召唤'||e.phase==='复活'||e.phase==='阵亡');
-  const motion=e?.action==='blocked'?'shake':e?.phase==='联动'||buff?'orbit':undefined;
+  const wheelLink=e?.phase==='联动'&&e.originRoll===b.round;
+  const motion=e?.action==='blocked'?'shake':wheelLink||buff?'orbit':undefined;
   if(motion)app.style.setProperty('--wheel-duration',WHEEL_MOTION[motion]/speed+'ms');
   for(const side of [0,1]){
     const arr=b.boards[side],living=b.units.filter(u=>u.side===side&&u.hp>0),live=living.length;
-    document.querySelector('#team'+side)!.textContent=(side?'敌方':'我方')+'在场 '+living.filter(u=>u.field).length+(b.corpseRules?'/'+FIELD_LIMIT:'');
-    document.querySelector('#wheel'+side)!.innerHTML='<h3>'+(side?'敌方轮盘':'我方轮盘')+'<small>存活 '+live+'</small></h3><div class="grid">'+arr.map(id=>{
+    document.querySelector('#team'+side)!.textContent=(side?'敌方':'我方')+'在场 '+living.filter(u=>u.field).length+'/'+FIELD_LIMIT;
+    const markup='<h3>'+(side?'敌方轮盘':'我方轮盘')+'<small>存活 '+live+'</small></h3><div class="grid">'+arr.map(id=>{
       const spell=b.spells?.find(s=>s.id===id);
       if(spell){
         const lit=e?.focus.includes(spell.id)?' lit':'';
@@ -166,27 +144,54 @@ function paint(){
       if(!u)return '<span class="cell empty">·</span>';
       const focused=e?.focus.includes(u.id);
       const effect=focused&&motion?' data-motion="'+motion+'"':'';
-      const lit=focused&&e?.phase!=='攻击'&&motion!=='shake'?' lit':'';
+      const lit=focused&&e?.phase!=='攻击'&&(e?.phase!=='联动'||wheelLink)&&motion!=='shake'?' lit':'';
       const name=units[u.kind].name;
       if(u.hp===0)return '<span class="cell fallen'+lit+'"'+effect+' role="img" aria-label="'+name+'的尸体">'+art(u.kind,'',true)+'</span>';
       const guarding=u.field&&hasGuardian(u.kind);
       return '<button class="cell'+lit+(guarding?' guardian':'')+'"'+effect+' data-kind="'+u.kind+'" data-attack="'+currentAttack(u)+'" data-health="'+maxHealth(u)+'" aria-label="'+name+(guarding?'，守护':'')+'">'+art(u.kind)+'</button>';
     }).join('')+'</div>';
+    if(wheelMarkup[side]!==markup){
+      document.querySelector('#wheel'+side)!.innerHTML=markup;
+      wheelMarkup[side]=markup;
+    }
   }
   document.querySelector('#round')!.textContent=(replay?'回看 · ':'')+'第 '+b.round+' 摇';
-  document.querySelector('#phase')!.textContent=e?.phase??'备战';document.querySelector('#message')!.textContent=e?.text??'双方列阵，准备摇盘。';
+  const phase=document.querySelector('#phase')!,message=document.querySelector('#message')!;
+  const phaseName=e?.phase??'备战';
+  const text=(e?.originRoll!==undefined&&e.originRoll!==b.round?'第 '+e.originRoll+' 摇联动 · ':'')+(e?.text??'双方列阵，准备摇盘。');
+  if(phase.textContent!==phaseName)phase.textContent=phaseName;
+  if(message.textContent!==text)message.textContent=text;
   paintControls();
-  arena?.paintArena(b,e,speed);
+  arena?.paintArena(b,e,speed,paused);
 }
 function paintControls(){
+  app.classList.toggle('battle-paused',paused);
+  arena?.setArenaPlayback(speed,paused);
   document.querySelector('#pause')!.textContent=paused?'继续':'暂停';document.querySelector('#speed')!.textContent=speed+'×';
 }
-function stopTimer(){window.clearTimeout(timer);}
-function schedule(){stopTimer();if(!paused)timer=window.setTimeout(tick,(currentEvent()?.phase==='攻击'?ATTACK_MS:520)/speed);}
+function stopTimer(){
+  if(!timer)return;
+  window.clearTimeout(timer);
+  timer=0;
+  remaining=Math.max(0,remaining-(performance.now()-startedAt)*speed);
+}
+function schedule(reset=false){
+  if(reset){
+    stopTimer();
+    remaining=momentDuration(currentEvent());
+  }
+  if(paused||timer)return;
+  startedAt=performance.now();
+  timer=window.setTimeout(()=>{
+    timer=0;
+    remaining=0;
+    tick();
+  },remaining/speed);
+}
 function tick(){
   if(!replay&&run.phase!=='battle')return;
   if(!pending){pending=step(run.battle!);index=0;}
-  if(index<pending.events.length){index++;paint();schedule();return;}
+  if(index<pending.events.length){index++;paint();schedule(true);return;}
   if(replay){leaveBattle();render();return;}
   commitRoll(run,pending);pending=undefined;index=0;save();
   if(run.phase!=='battle'){leaveBattle();render();return;}
@@ -203,7 +208,7 @@ function fastFinish(){
 function results(){
   const end=run.phase==='end',wins=run.results.filter(x=>x==='胜利').length;
   const lastStage=run.results.length-1, result=run.results.at(-1);
-  const cleared=wins>=(run.legacyClearRequirement??REQUIRED_WINS);
+  const cleared=wins>=REQUIRED_WINS;
   const nextShop=!end&&run.stage<encounters.length-1;
   const battle=run.battle;
   const title=end?(cleared?'远征通关':result==='胜利'?'远征结束':result+' · 远征结束'):result;
@@ -220,7 +225,7 @@ function results(){
 function render(){
   if(run.phase==='shop'){
     if(removalOpen)removalView();else shopView();
-  }else if(run.phase==='battle'){battleShell();schedule();}else results();
+  }else if(run.phase==='battle'){battleShell();schedule(true);}else results();
   if(saveWarning)app.insertAdjacentHTML('beforeend','<p>浏览器未能保存，本局进度仅在当前标签页有效。</p>');
 }
 app.addEventListener('click',event=>{
@@ -264,7 +269,7 @@ app.addEventListener('click',event=>{
     case 'fight':startBattle(run);paused=false;save();render();break;
     case 'pause':togglePause();break;
     case 'step':paused=true;stopTimer();tick();break;
-    case 'speed':speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
+    case 'speed':stopTimer();speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
     case 'skip':fastFinish();break;
     case 'advance':advance(run);selected=0;save();render();break;
     case 'reset':run=newRun(getSeed());selected=0;save();render();break;
@@ -273,7 +278,7 @@ app.addEventListener('click',event=>{
       modal('战斗记录','<ol>'+lines.map(l=>'<li>'+l+'</li>').join('')+'</ol>'+(lines.length?'':'<p>第一摇即将开始。</p>'));break;
     }
     case 'replay':{
-      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);const checkpoint=run.history[round];pending=step(checkpoint,checkpoint.order??'legacy');index=1;replay=true;paused=false;battleShell();schedule();break;
+      const round=Number(document.querySelector<HTMLSelectElement>('#review-round')!.value);const checkpoint=run.history[round];pending=step(checkpoint);index=1;replay=true;paused=false;battleShell();schedule(true);break;
     }
   }
 });
