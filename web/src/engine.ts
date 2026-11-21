@@ -1,4 +1,4 @@
-import {units, encounters, offer, royal, humanOffer, hasGuardian, type Kind, type Offer} from './data.ts';
+import {units, encounters, offer, royal, hasGuardian, GOLD_REWARD, REFRESH_COST, type Kind, type Offer} from './data.ts';
 export type Side = 0|1;
 export const FIELD_LIMIT = 9;
 export type Unit = {
@@ -9,7 +9,7 @@ export type Unit = {
 export type Battle = {round:number; rng:number; units:Unit[]; boards:(string|null)[][]; hp?:[number,number]; lastingGrowth?:true; immediateDeaths?:true; corpseRules?:true};
 export type Moment = {phase:string; text:string; focus:string[]; state:Battle; action?:'attack'|'death'|'heal'|'empower'|'blocked'; source?:string; target?:string; value?:string; valueTargets?:string[]; shieldGain?:number};
 export type Outcome = '胜利'|'落败'|'平局';
-export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>; offers:Offer[]; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
+export type Run = {version:1; seed:number; stage:number; gold:number; roster:Kind[]; attackGrowth?:Record<string,number>; healthGrowth?:Record<string,number>; offers:Offer[]; refreshes?:number; legacyThirdBattle?:true; phase:'shop'|'battle'|'result'|'end'; battle:Battle|null; results:Outcome[]; log:string[]; history:(Battle & {order?:'board'})[]};
 const copy = <T>(x:T):T => structuredClone(x);
 export function currentAttack(unit:Unit){
   return units[unit.kind].atk+unit.bonus+(unit.battleAttackBonus??0)+(unit.roundAttackBonus??0);
@@ -31,33 +31,46 @@ function shuffle<T>(items:T[],s:{rng:number}):T[] {
   for(let i=items.length-1;i>0;i--){const j=Math.floor(rng(s)*(i+1));[items[i],items[j]]=[items[j],items[i]];}
   return items;
 }
-export function shop(seed:number,stage:number) {
-  if(stage===0)return [offer(['medic'],3),royal(),offer(['guard'],2),humanOffer(stage)];
-  const s={rng:(seed ^ Math.imul(stage,0x9e3779b1))>>>0};
-  return [rng(s)<.5?offer(['medic'],3):offer(['guard'],2),rng(s)<.5?royal():offer(['page','page'],2,'纸甲侍从小队'),offer([rng(s)<.5?'guard':'archer'],2),humanOffer(stage)];
+export function shop(seed:number,stage:number,refreshes=0) {
+  if(stage===0&&refreshes===0)return [offer(['archer'],3),offer(['swordsman'],3),offer(['lancer'],3),royal()];
+  const s={rng:(seed ^ Math.imul(stage+1,0x9e3779b1) ^ Math.imul(refreshes+1,0x85ebca6b))>>>0};
+  const attack=pick<Kind>(['archer','swordsman','lancer'],s);
+  const support=pick<Kind>(stage>=2?['medic','axeman','templar']:['medic','axeman'],s);
+  const basic=pick<Kind>(['guard','soldier'],s);
+  return [offer([attack],3),offer([support],support==='templar'?4:3),offer([basic],2),
+    rng(s)<.5?royal():offer(['page','page'],2,'纸甲侍从小队')];
 }
 export function newRun(seed:number):Run {
-  return {version:1,seed,stage:0,gold:5,roster:['guard','archer','guard','archer'],offers:shop(seed,0),phase:'shop',battle:null,results:[],log:[],history:[]};
+  return {version:1,seed,stage:0,gold:5,roster:['guard','guard','soldier'],offers:shop(seed,0),refreshes:0,phase:'shop',battle:null,results:[],log:[],history:[]};
 }
 export function buy(run:Run,index:number) {
   const o=run.offers[index];
   if(run.phase!=='shop'||!o||o.sold||run.gold<o.price)return false;
   run.gold-=o.price;run.roster.push(...o.kinds);o.sold=true;return true;
 }
+export function refreshShop(run:Run){
+  if(run.phase!=='shop'||run.gold<REFRESH_COST)return false;
+  run.gold-=REFRESH_COST;
+  run.refreshes=(run.refreshes??0)+1;
+  run.offers=shop(run.seed,run.stage,run.refreshes);
+  return true;
+}
 export function startBattle(r:Run){
   if(r.phase!=='shop')return;
-  const us=[r.roster,encounters[r.stage].units].flatMap((team,side)=>team.map((k,i):Unit=>{
+  const encounter=encounters[r.stage];
+  const us=[r.roster,encounter.units].flatMap((team,side)=>team.map((k,i):Unit=>{
     const id=side+'-'+i;
-    const healthBonus=side===0?(r.healthGrowth?.[id]??0):0;
-    return {id,kind:k,side:side as Side,hp:units[k].hp+healthBonus,shield:0,bonus:side===0?(r.attackGrowth?.[id]??0):0,healthBonus,field:false};
+    const healthBonus=side===0?(r.healthGrowth?.[id]??0):encounter.health;
+    const bonus=side===0?(r.attackGrowth?.[id]??0):encounter.attack;
+    return {id,kind:k,side:side as Side,hp:units[k].hp+healthBonus,shield:0,bonus,healthBonus,field:false};
   }));
   r.battle={round:0,rng:(r.seed^Math.imul(r.stage+1,2654435761))>>>0,units:us,lastingGrowth:true,immediateDeaths:true,corpseRules:true,boards:[Array(9).fill(null),Array(9).fill(null)]};
   r.history=[];r.log=[];r.phase='battle';
 }
 export function advance(r:Run) {
   if(r.phase!=='result')return;
-  if(r.stage===2){r.phase='end';return;}
-  r.stage++;r.gold+=3;r.offers=shop(r.seed,r.stage);r.battle=null;r.history=[];r.phase='shop';
+  if(r.stage===encounters.length-1){r.phase='end';return;}
+  r.stage++;r.gold+=GOLD_REWARD;r.refreshes=0;r.offers=shop(r.seed,r.stage);r.battle=null;r.history=[];r.phase='shop';
 }
 export function adjacent(a:number,b:number) {
   return a>=0&&b>=0&&a!==b&&Math.max(Math.abs(a%3-b%3),Math.abs(Math.floor(a/3)-Math.floor(b/3)))===1;
@@ -76,10 +89,12 @@ export function outcome(b:Battle):Outcome|undefined {
   if(!enemiesRemain)return '胜利';
   if(b.round>=100)return '平局';
 }
-export function step(start:Battle, order:'board'|'legacy'='board') {
+export function step(start:Battle, order:'board'|'legacy'='board', {captureEvents=true}={}) {
   const b=copy(start),events:Moment[]=[];
   const byId=new Map(b.units.map(u=>[u.id,u]));
-  const record=(phase:string,text:string,focus:string[]=[],extra:Partial<Moment>={})=>events.push({phase,text,focus,state:copy(b),...extra});
+  const record=(phase:string,text:string,focus:string[]=[],extra:Partial<Moment>={})=>{
+    if(captureEvents)events.push({phase,text,focus,state:copy(b),...extra});
+  };
   const label=(u:Unit)=>(u.side?'敌方':'我方')+units[u.kind].name;
   const isHuman=(u:Unit)=>u.field&&u.hp>0&&units[u.kind].race==='human';
   const humanAllies=(u:Unit)=>b.units.filter(n=>n.side===u.side&&isHuman(n));

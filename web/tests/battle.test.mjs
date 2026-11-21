@@ -1,22 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adjacent,newRun,buy,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
-import {units} from '../src/data.ts';
+import {adjacent,newRun,shop,buy,refreshShop,startBattle,advance,step,commitRoll,outcome,maxHealth,currentAttack} from '../src/engine.ts';
+import {encounters,units,GOLD_REWARD,REFRESH_COST} from '../src/data.ts';
 function field(ours,theirs){
   const r=newRun(42);startBattle(r);
   r.battle.units=[ours,theirs].flatMap((team,side)=>team.map((kind,i)=>({id:side+'-'+i,kind,side,hp:units[kind].hp,shield:0,bonus:0,field:true})));
   return r.battle;
 }
-test('three shops, three battles, one payment per offer; reproducible replay',()=>{
+test('seven shops, seven battles, one payment per offer; reproducible replay',()=>{
   for(let seed=0;seed<24;seed++){
-    const r=newRun(seed);assert.ok(buy(r,1));assert.equal(buy(r,1),false);assert.equal(r.roster.length,7);
-    for(let i=0;i<3;i++){
+    const r=newRun(seed);
+    assert.deepEqual(r.roster,['guard','guard','soldier']);
+    assert.ok(buy(r,0));assert.equal(buy(r,0),false);assert.equal(r.roster.length,4);
+    for(let i=0;i<7;i++){
       assert.equal(r.stage,i);startBattle(r);assert.equal(r.battle.hp,undefined);
       const first=step(r.battle);assert.deepEqual(first,step(r.battle));assert.equal(first.events.some(e=>e.phase==='攻击'),false);
+      assert.deepEqual(first.next,step(r.battle,'board',{captureEvents:false}).next);
       for(let j=0;r.phase==='battle'&&j<101;j++)commitRoll(r,step(r.battle));
       assert.equal(r.phase,'result');advance(r);
     }
-    assert.equal(r.phase,'end');assert.equal(r.results.length,3);assert.equal(r.gold,6);
+    assert.equal(r.phase,'end');assert.equal(r.results.length,7);assert.equal(r.gold,2+6*GOLD_REWARD);
   }
 });
 test('eight neighbors, shuffled distinct instances, former replays omit corpses',()=>{
@@ -140,7 +143,7 @@ test('replays with hero health preserve their old victory and guard shield rules
 
 test('growth follows individual allies across battles, including allies that fell',()=>{
   const r=newRun(23);
-  assert.ok(buy(r,1));
+  r.roster.push('archer','archer','king');
   startBattle(r);
   const next=structuredClone(r.battle);
   next.round=1;
@@ -156,7 +159,7 @@ test('growth follows individual allies across battles, including allies that fel
   advance(resumed);
   startBattle(resumed);
   const foe=resumed.battle.units.filter(u=>u.side===1);
-  assert.ok(foe.every(u=>u.bonus===0));
+  assert.ok(foe.every(u=>u.bonus===encounters[1].attack&&u.healthBonus===encounters[1].health));
   assert.equal(resumed.battle.units.find(u=>u.id==='0-1').bonus,2);
   assert.equal(resumed.battle.units.find(u=>u.id==='0-3').bonus,3);
   const revived=resumed.battle.units.find(u=>u.id===king.id);
@@ -264,20 +267,44 @@ test('the first adjacent king consumes every shared corpse once and grows before
   assert.fail('missing two kings with shared neighbors');
 });
 
-test('the three shops offer all five human recruits within the starting budget',()=>{
-  const r=newRun(9);
-  const recruits=[['soldier','swordsman'],['axeman','lancer'],['templar']];
-  for(const kinds of recruits){
-    assert.deepEqual(r.offers[3].kinds,kinds);
-    assert.ok(buy(r,3));
-    startBattle(r);
-    const first=step(r.battle);
-    assert.deepEqual(first,step(r.battle));
-    commitRoll(r,{...first,outcome:'胜利'});
-    advance(r);
+test('all human recruits are offered individually',()=>{
+  const available=new Set();
+  for(let seed=0;seed<100;seed++){
+    for(let stage=0;stage<7;stage++){
+      for(const listing of shop(seed,stage)){
+        if(!listing.kinds.some(k=>units[k].race==='human'))continue;
+        assert.equal(listing.kinds.length,1);
+        available.add(listing.kinds[0]);
+      }
+    }
   }
-  assert.equal(r.gold,1);
-  assert.equal(r.roster.length,9);
+  assert.deepEqual(available,new Set(['archer','swordsman','lancer','medic','axeman','templar','guard','soldier']));
+});
+
+test('refresh costs one gold, restocks, survives reload, and resets at the next shop',()=>{
+  const r=newRun(9);
+  assert.ok(buy(r,0));
+  const roster=[...r.roster],before=structuredClone(r.offers);
+  assert.ok(refreshShop(r));
+  assert.equal(r.gold,2-REFRESH_COST);
+  assert.deepEqual(r.roster,roster);
+  assert.notDeepEqual(r.offers,before);
+  assert.ok(r.offers.every(o=>!o.sold));
+  const resumed=JSON.parse(JSON.stringify(r));
+  assert.ok(refreshShop(r));assert.ok(refreshShop(resumed));
+  assert.deepEqual(r,resumed);
+  assert.equal(r.gold,0);
+  const snapshot=structuredClone(r);
+  assert.equal(refreshShop(r),false);
+  assert.deepEqual(r,snapshot);
+  startBattle(r);
+  r.gold=1;
+  assert.equal(refreshShop(r),false);
+  const first=step(r.battle);
+  commitRoll(r,{...first,outcome:'胜利'});
+  advance(r);
+  assert.equal(r.refreshes,0);
+  assert.deepEqual(r.offers,shop(r.seed,1));
 });
 
 test('entry bonuses reach the correct deployed humans, including diagonal neighbors',()=>{

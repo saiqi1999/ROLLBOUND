@@ -19,17 +19,19 @@ export const units = {
 export type Kind = keyof typeof units;
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];
 export type Offer = { title:string; kinds:Kind[]; price:number; sold:boolean };
-export const encounters: {name:string; units:Kind[]}[] = [
-  {name:'边境巡队',units:['orc','orc','bone']},
-  {name:'灰骨哨所',units:['orc','orc','bone','bone']},
-  {name:'暮色王庭',units:['king','page','page','orc','bone','bone']}
+export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number}[] = [
+  {name:'边境巡队',camp:'边境',units:['orc','orc','bone'],health:0,attack:0},
+  {name:'灰骨哨所',camp:'哨所',units:['orc','orc','bone','bone'],health:0,attack:1},
+  {name:'裂牙先锋',camp:'裂牙',units:['orc','orc','orc','bone','bone'],health:1,attack:2},
+  {name:'黑铁前线',camp:'黑铁',units:['axeman','swordsman','soldier','guard','lancer','medic'],health:0,attack:0},
+  {name:'荒原围军',camp:'荒原',units:['orc','orc','orc','orc','bone','bone','bone'],health:6,attack:2},
+  {name:'铁誓军团',camp:'铁誓',units:['templar','axeman','swordsman','soldier','lancer','medic','archer','archer'],health:1,attack:0},
+  {name:'暮色王庭',camp:'王庭',units:['king','king','page','page','page','orc','orc','bone','bone'],health:10,attack:2}
 ];
+export const GOLD_REWARD = 3;
+export const REFRESH_COST = 1;
+export const REQUIRED_WINS = encounters.length-1;
 export function offer(kinds:Kind[],price:number,title=units[kinds[0]].name as string):Offer {
   return {kinds,price,title,sold:false};
 }
 export const royal = () => offer(['king','page','page'],5,'暮王与侍从');
-export function humanOffer(stage:number){
-  if(stage===0)return offer(['soldier','swordsman'],3,'步兵小队');
-  if(stage===1)return offer(['axeman','lancer'],3,'重甲前锋');
-  return offer(['templar'],4);
-}
