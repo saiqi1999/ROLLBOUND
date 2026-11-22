@@ -191,6 +191,77 @@ test('a skeleton destroyed in the shop grants two gold without replacing its ins
   assert.ok(roll.settled.every(slot=>slot?.id!==page.id));
 });
 
+test('greatsword copies keep permanent stats and wait across saves and battles for the next paid spin',t=>{
+  const team=['king','greatswordSkeleton',...Array(14).fill('guard')];
+  const {run,roster:[king,original],roll}=sampleSpin(team,[],(near,[king,skeleton])=>near(king,skeleton),
+    ([,skeleton])=>Object.assign(skeleton,{gainedAttack:4,gainedHealth:7,startingArmor:3}));
+  assert.equal(roll.events.length,1);
+  assert.match(roll.events[0].text,/下次摇盘入队/);
+  assert.equal(run.roster.length,15);
+  const [copy]=run.pendingRecruits;
+  assert.deepEqual(run.pendingRecruits,[{
+    id:'0-16',kind:'greatswordSkeleton',gainedAttack:9,gainedHealth:12,startingArmor:3,
+  }]);
+  assert.ok(roll.settled.every(slot=>slot?.id!==original.id&&slot?.id!==copy.id));
+  assert.deepEqual([king.gainedAttack,king.gainedHealth],[2,2]);
+
+  const storage=new Map();
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
+    getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),
+  }});
+  t.after(()=>{
+    if(previous)Object.defineProperty(globalThis,'localStorage',previous);
+    else delete globalThis.localStorage;
+  });
+  const noQueue=structuredClone(run);
+  delete noQueue.pendingRecruits;
+  assert.ok(saveRun(noQueue));
+  assert.deepEqual(loadRun().pendingRecruits,[]);
+  assert.ok(saveRun(run));
+  const loaded=loadRun();
+  assert.deepEqual(loaded,run);
+  loaded.gold=0;
+  assert.equal(resolveSpin(loaded),undefined);
+  assert.deepEqual(loaded.pendingRecruits,[copy]);
+  assert.ok(startBattle(loaded));
+  assert.ok(loaded.battle.units.every(unit=>unit.id!==copy.id));
+  loaded.phase='result';
+  advance(loaded);
+  assert.deepEqual(loaded.pendingRecruits,[copy]);
+  const second=resolveSpin(loaded);
+  assert.ok(second.drawn.some(slot=>slot?.id===copy.id));
+  assert.deepEqual(second.drawnStats[copy.id],{attack:12,health:20});
+  const copySurvived=loaded.roster.some(unit=>unit.id===copy.id);
+  assert.equal(loaded.pendingRecruits.length,copySurvived?0:1);
+  if(!copySurvived){
+    assert.equal(loaded.pendingRecruits[0].gainedAttack,14);
+    assert.equal(loaded.pendingRecruits[0].gainedHealth,17);
+    assert.ok(second.settled.every(slot=>slot?.kind!=='greatswordSkeleton'));
+  }
+});
+
+test('a necromancer can destroy all eight adjacent skeletons in one spin and queue each copy',()=>{
+  const {run,roster:[king],roll}=sampleSpin(
+    ['king',...Array(15).fill('greatswordSkeleton')],[],(_, [source], __, result)=>
+      neighborSlots(result.drawn.findIndex(slot=>slot?.id===source.id)).length===8,
+  );
+  assert.deepEqual([king.gainedAttack,king.gainedHealth],[16,16]);
+  assert.equal(run.pendingRecruits.length,8);
+  assert.equal(roll.settled.filter(Boolean).length,8);
+  assert.equal(roll.events.length,1);
+});
+
+test('a priest and the removal marker cannot create a greatsword skeleton copy',()=>{
+  const {run,roster:[priest,skeleton],roll}=sampleSpin(['medic','greatswordSkeleton'],[],
+    (near,[priest,skeleton])=>near(priest,skeleton));
+  assert.deepEqual(roll.events,[]);
+  assert.deepEqual(run.roster,[priest,skeleton]);
+  run.results=['胜利','胜利'];
+  assert.ok(removeUnit(run,skeleton.id));
+  assert.deepEqual(run.roster,[priest]);
+});
+
 test('a priest triggers adjacent templar death effects without killing it, and a skeleton pays only on actual destruction',()=>{
   const {run,roster,roll}=sampleSpin(['medic','templar','page','guard'],[],(near,[priest,templar,page])=>
     near(priest,templar)&&near(priest,page));
@@ -214,7 +285,7 @@ test('a priest summons from an armored skeleton once even when those recruits re
   assert.equal(roll.events.filter(event=>event.text.includes('触发死亡效果')).length,1);
 });
 
-test('armored skeleton destruction fills randomized empty slots immediately and can chain a second destruction',()=>{
+test('armored skeleton destruction fills randomized empty slots and can chain multiple destructions',()=>{
   const {run,roster,roll}=sampleSpin(['king','armoredSkeleton'],[],(near,[king,armored])=>near(king,armored));
   const [king,armored]=roster;
   const [death,chain]=roll.events;
@@ -226,9 +297,10 @@ test('armored skeleton destruction fills randomized empty slots immediately and 
   assert.deepEqual(death.after.stats[king.id],{attack:5,health:14});
   assert.ok(death.buffed.includes(king.id));
   assert.match(chain.text,/^连锁 · 亡灵法师/);
-  assert.deepEqual(roll.settledStats[king.id],{attack:7,health:16});
-  assert.deepEqual(run.roster.map(unit=>unit.kind),['king','page','page']);
-  assert.equal(run.gold,21);
+  const chomped=positions.filter(index=>neighborSlots(roll.drawn.findIndex(slot=>slot?.id===king.id)).includes(index)).length;
+  assert.deepEqual(roll.settledStats[king.id],{attack:5+2*chomped,health:14+2*chomped});
+  assert.equal(run.roster.filter(unit=>unit.kind==='page').length,3-chomped);
+  assert.equal(run.gold,19+2*chomped);
 });
 
 test('death recruits that cannot fit stay in the roster without displacing an existing tile',()=>{

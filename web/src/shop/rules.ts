@@ -1,5 +1,5 @@
 import {
-  ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,NECROMANCER_LIMIT,
+  ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,
   ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SKELETON_GOLD,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,canEvolveOrc,hasGuardian,humanKinds,
   spellKinds,spellOffer,spells,unitKinds,unitOffer,units,wizardEntryGain,
   type Kind,type SpellKind,
@@ -57,8 +57,10 @@ export function restoreShopBoard(run:Run){
   run.shop.board=board;
 }
 
+const nextUnitId=(run:Run)=>'0-'+run.nextId++;
+
 export function recruit(run:Run,kind:Kind,gainedAttack=0,gainedHealth=0){
-  const unit={id:'0-'+run.nextId++,kind,gainedAttack,gainedHealth,startingArmor:0};
+  const unit={id:nextUnitId(run),kind,gainedAttack,gainedHealth,startingArmor:0};
   run.roster.push(unit);
   return unit;
 }
@@ -108,7 +110,7 @@ export function detachShopUnit(run:Run,id:string){
 
 export const spinCost=(paidSpins:number)=>1+Math.floor(paidSpins/2);
 export const canSpin=(run:Run)=>run.phase==='shop'&&run.gold>=spinCost(run.shop.paidSpins)&&
-  (run.roster.length+run.spells.length)>0;
+  (run.roster.length+run.pendingRecruits.length+run.spells.length)>0;
 
 type Spin = {
   run:Run;
@@ -119,14 +121,13 @@ type Spin = {
   pending:Set<number>;
   examined:Set<string>;
   joined:Set<string>;
-  destroyedBy:Map<string,number>;
   granted:Set<string>;
   priestTriggers:Set<string>;
   evolved:Set<string>;
 };
 const name=(unit:UnitInstance)=>units[unit.kind].name;
 const unique=(ids:string[])=>[...new Set(ids)];
-const necromancerTargets=new Set<Kind>(['page','armoredSkeleton','bone']);
+const necromancerTargets=new Set<Kind>(['page','armoredSkeleton','bone','greatswordSkeleton']);
 const deathEffectKinds=new Set<Kind>(['armoredSkeleton','bone','axeman','templar']);
 const human=(unit:UnitInstance)=>units[unit.kind].race==='human';
 
@@ -243,14 +244,11 @@ function resolvePriest(spin:Spin,source:UnitInstance,neighbors:UnitInstance[],pr
 
 function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:string){
   const {run,board}=spin;
-  const already=spin.destroyedBy.get(source.id)??0;
-  const limit=NECROMANCER_LIMIT-already;
-  if(!limit)return;
   // Pick this effect's targets before placing any death recruits.
   const targets=neighborSlots(index).filter(position=>{
     const slot=board[position];
     return slot?.type==='unit'&&necromancerTargets.has(slot.kind);
-  }).slice(0,limit);
+  });
   if(!targets.length)return;
   const removed:string[]=[],names:string[]=[],archers:string[]=[],rewards:string[]=[];
   const buffed=[source.id];
@@ -267,6 +265,11 @@ function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:st
     if(victim.kind==='page'){
       gold+=SKELETON_GOLD;
       run.gold+=SKELETON_GOLD;
+    }else if(victim.kind==='greatswordSkeleton'){
+      const copy={...victim,id:nextUnitId(run)};
+      grantGrowth(copy,{attack:GREATSWORD_COPY_GAIN,health:GREATSWORD_COPY_GAIN});
+      run.pendingRecruits.push(copy);
+      rewards.push(name(copy)+'的复制永久 +'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'，下次摇盘入队');
     }else{
       const death=triggerShopDeath(spin,victim,source);
       if(death){
@@ -279,7 +282,6 @@ function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:st
     }
   }
   if(!removed.length)return;
-  spin.destroyedBy.set(source.id,already+removed.length);
   const survivingArchers=archers.filter(id=>spin.units.has(id));
   buffed.push(...survivingArchers);
   const gain=removed.length*NECROMANCER_GAIN;
@@ -377,14 +379,21 @@ export function resolveEvolutions(run:Run,spin?:Spin){
 export function resolveSpin(run:Run){
   if(!canSpin(run))return;
   run.gold-=spinCost(run.shop.paidSpins);
+  const waiting=run.pendingRecruits;
+  run.roster.push(...waiting);
+  run.pendingRecruits=[];
   const seed=(run.seed^Math.imul(run.stage+1,0xb4b82e39)^Math.imul(++run.shop.paidSpins,0x7f4a7c15))>>>0;
   const board=drawShopBoard(run.roster,run.spells,{rng:seed});
   const drawn=wheelFrame(board,run.roster);
   const spin:Spin={
     run,board,units:new Map(run.roster.map(unit=>[unit.id,unit])),random:{rng:(seed^0x92dbf76b)>>>0},events:[],
-    pending:new Set(board.keys()),examined:new Set(),joined:new Set(),destroyedBy:new Map(),
+    pending:new Set(board.keys()),examined:new Set(),joined:new Set(),
     granted:new Set(),priestTriggers:new Set(),evolved:new Set(),
   };
+  if(waiting.length){
+    const visible=waiting.filter(unit=>Object.hasOwn(drawn.stats,unit.id)).map(unit=>unit.id);
+    recordEffect(spin,waiting.length+' 名大剑骷髅的复制入队，'+visible.length+' 名入盘。',visible,visible);
+  }
   for(const [index,slot] of drawn.board.entries()){
     if(slot?.type==='spell')resolveSpell(spin,slot,index);
   }

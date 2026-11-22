@@ -109,6 +109,15 @@ test('an armored skeleton on the last tile summons before the loss check',()=>{
   assert.equal(live(result.next,1).length,3);
 });
 
+test('a greatsword skeleton destroyed in combat leaves no copy',()=>{
+  const {battle}=scenario([['guard']],[['greatswordSkeleton']]);
+  battle.openingSpells=fireballs(1);
+  const {next,outcome}=simulateBattleWindow(battle,{tickLimit:0});
+  assert.equal(outcome,'胜利');
+  assert.equal(next.units.filter(unit=>unit.kind==='greatswordSkeleton').length,1);
+  assert.equal(live(next,1).length,0);
+});
+
 test('opened spells can end a fight before the first combat tick and replay their effect',()=>{
   const run=scenario([['guard']],[['orc']]);
   run.battle.openingSpells=fireballs(1);

@@ -11,15 +11,15 @@ export const SLIME_REMOVAL_GAIN=2;
 export const GUARD_SHIELD=2;
 export const HUMAN_ARMOR=3;
 export const NECROMANCER_GAIN=2;
-export const NECROMANCER_LIMIT=2;
 export const SKELETON_GOLD=2;
 export const BONE_ATTACK_GAIN=3;
+export const GREATSWORD_COPY_GAIN=5;
 
 export const units = {
   guard: { name:'木盾卫士', race:'human', hp:12, atk:2, text:'攻击时，获得'+GUARD_SHIELD+'护盾。' },
   archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:'与守护单位相邻时，永久获得+1攻击。' },
   medic: { name:'牧师', race:'human', hp:8, atk:1, text:'触发相邻友方单位的死亡时效果。' },
-  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。每摇消灭至多'+NECROMANCER_LIMIT+'名相邻的骷髅兵、重甲骷髅或骷髅弓箭手。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
+  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。消灭所有相邻的友方骷髅。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
   page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'在商店被消灭时，获得'+SKELETON_GOLD+'金币。' },
   orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'攻击力超过'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
   bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘其他友方亡灵被消灭时，永久+'+BONE_ATTACK_GAIN+'攻击。商店死亡时，使触发者永久+'+BONE_ATTACK_GAIN+'攻击。友方亡灵在战斗中阵亡时，本场+'+BONE_ATTACK_GAIN+'攻击。' },
@@ -33,7 +33,8 @@ export const units = {
   slime: { name:'史莱姆', race:'monster', hp:6, atk:1, text:'在商店被移除时，使队伍中其余所有单位永久获得+'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。' },
   orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:3, text:'攻击时额外连击一次。每击杀一个敌人，永久获得+1/+1。' },
   armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'死亡时，招来'+ARMORED_SKELETON_SPAWNS+'名骷髅兵。商店中永久入队并寻找空格上盘，战斗中立即召唤临时单位。' },
-  bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:'招募时，随机获得1个法术。' }
+  bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:'招募时，随机获得1个法术。' },
+  greatswordSkeleton: { name:'大剑骷髅', race:'undead', hp:8, atk:3, text:'在商店被消灭时，复制自身并使复制永久获得+'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'。复制在下次摇盘时入队。' },
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
 export const unitKinds=Object.keys(units) as Kind[];
@@ -42,7 +43,7 @@ export const wizardEntryGain=(spellCasts=0)=>Math.min(4,1+spellCasts);
 const unitPrices:Record<Kind,number>={
   guard:2,archer:3,medic:3,king:5,page:1,orc:3,bone:2,
   soldier:2,swordsman:3,axeman:3,lancer:3,templar:4,wizard:3,armoredOrc:5,slime:1,
-  orcRider:6,armoredSkeleton:4,bat:3
+  orcRider:6,armoredSkeleton:4,bat:3,greatswordSkeleton:4
 };
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];
 export const canEvolveOrc = (kind:Kind,attack:number) => kind==='orc'&&attack>ORC_ARMOR_THRESHOLD;

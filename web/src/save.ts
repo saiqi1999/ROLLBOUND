@@ -6,7 +6,7 @@ import {restoreShopBoard} from './shop/rules.ts';
 const key='rollbound.shop-wheel.v5';
 const legacyKey='rollbound.shop-wheel.v4';
 
-type LegacyRun=Omit<Run,'version'|'roster'|'shop'>&{
+type LegacyRun=Omit<Run,'version'|'roster'|'shop'|'pendingRecruits'>&{
   version:4;
   roster:Omit<UnitInstance,'startingArmor'>[];
   shop:Omit<ShopState,'openingSpells'>&{
@@ -29,7 +29,7 @@ function migrate(saved:LegacyRun):Run{
     }
     return unit;
   });
-  return {...saved,version:5,roster,shop:{...shop,openingSpells:preparations.openingSpells}};
+  return {...saved,version:5,roster,pendingRecruits:[],shop:{...shop,openingSpells:preparations.openingSpells}};
 }
 
 export function loadRun():Run|undefined{
@@ -40,6 +40,7 @@ export function loadRun():Run|undefined{
       Array.isArray(saved.spells)&&Array.isArray(saved.history)&&saved.shop&&
       (saved.phase!=='battle'||saved.battle?.runtime)){
       const run=saved.version===4?migrate(saved):saved;
+      run.pendingRecruits??=[];
       restoreShopBoard(run);
       if(saved.version===4)run.shop.lastSpin=null;
       return run;

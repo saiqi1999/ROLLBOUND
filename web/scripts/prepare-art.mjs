@@ -8,7 +8,8 @@ await mkdir(dest,{recursive:true});
 const names={
   guard:'Knight',archer:'Archer',medic:'Priest',king:'Necromancer',page:'Skeleton',orc:'Orc',bone:'Skeleton Archer',
   soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
-  armoredOrc:'Armored Orc',slime:'Slime',orcRider:'Orc rider',armoredSkeleton:'Armored Skeleton',bat:'Bat'
+  armoredOrc:'Armored Orc',slime:'Slime',orcRider:'Orc rider',armoredSkeleton:'Armored Skeleton',bat:'Bat',
+  greatswordSkeleton:'Greatsword Skeleton',
 };
 const manifest={};
 for(const [id,name] of Object.entries(names)){
@@ -25,8 +26,9 @@ for(const [id,name] of Object.entries(names)){
     manifest[id][move]=count;
     if(move==='idle'){
       const height=id==='lancer'?44:36;
+      const left=id==='greatswordSkeleton'?24:30;
       const badge=new PNG({width:40,height});
-      PNG.bitblt(src,badge,30,62-height,40,height,0,0);
+      PNG.bitblt(src,badge,left,62-height,40,height,0,0);
       await writeFile(path.join(dest,id+'.png'),PNG.sync.write(badge));
     }
   }

@@ -77,17 +77,20 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
 
   const count=run.roster.length;
   const ready=canStartBattle(run);
-  const stranded=!ready&&!run.shop.offers.some(offer=>!offer.spell&&!offer.sold&&offer.price<=run.gold)&&run.gold<=REFRESH_COST;
+  const recruitsWaiting=run.pendingRecruits.length;
+  const awaitingSpin=recruitsWaiting>0&&canSpin(run);
+  const stranded=!ready&&!awaitingSpin&&!run.shop.offers.some(offer=>!offer.spell&&!offer.sold&&offer.price<=run.gold)&&run.gold<=REFRESH_COST;
   const fight=root.querySelector<HTMLButtonElement>('[data-act="fight"]')!;
   fight.disabled=spinning||!ready;
   fight.hidden=stranded;
   root.querySelector<HTMLButtonElement>('[data-act="reset"]')!.hidden=!stranded;
   root.querySelector('#departure-note')!.textContent=stranded?'余款不足以招募，可重新开局。':
-    ready?'随机首发 '+Math.min(count,FIELD_LIMIT)+' · 候补 '+Math.max(0,count-FIELD_LIMIT):'招募至少 1 名单位后开战。';
+    ready?'随机首发 '+Math.min(count,FIELD_LIMIT)+' · 候补 '+Math.max(0,count-FIELD_LIMIT):
+    awaitingSpin?'摇盘后，待入队单位可出战。':'招募至少 1 名单位后开战。';
   root.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+count+' 名</small></h3>'+
     (count?'<div class="roster">'+alliedRoster(run)+'</div>':'<p class="muted">从货架招募单位。</p>')+spellInventory(run);
 
-  const symbols=count+run.spells.length;
+  const symbols=count+recruitsWaiting+run.spells.length;
   const offWheel=run.roster.length-run.shop.board.filter(slot=>slot?.type==='unit').length;
   root.querySelector<HTMLButtonElement>('.mobile-shelf-cta')!.hidden=spinning||symbols!==0;
   const cost=spinCost(run.shop.paidSpins);
@@ -96,9 +99,10 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   spin.innerHTML=spinning?'摇盘中…':'摇盘 <span class="offer-cost">'+coin+cost+' 金</span>';
   root.querySelector<HTMLButtonElement>('[data-act="skip-spin"]')!.hidden=!spinning;
   root.querySelector('#wheel-status')!.textContent=spinning?'从左到右停盘':
-    symbols===0?'招募单位或购买法术后可摇盘。':
-    run.gold<cost?'还差 '+(cost-run.gold)+' 金。':'可抽取 '+symbols+' 个符号'+
-      (offWheel?' · 盘外 '+offWheel+' 名':'')+' · 下次 '+spinCost(run.shop.paidSpins+1)+' 金';
+    (symbols===0?'招募单位或购买法术后可摇盘。':
+      run.gold<cost?'还差 '+(cost-run.gold)+' 金。':'可抽取 '+symbols+' 个符号'+
+        (offWheel?' · 盘外 '+offWheel+' 名':'')+' · 下次 '+spinCost(run.shop.paidSpins+1)+' 金')+
+    (recruitsWaiting?' · 下次摇盘入队 '+recruitsWaiting+' 名':'');
 }
 
 export function paintSpinSummary(root:HTMLElement,run:Run){

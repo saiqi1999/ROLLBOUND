@@ -11,14 +11,14 @@ export {simulateBattleWindow} from './battle/resolve.ts';
 
 export type Run = {
   version:5;seed:number;stage:number;gold:number;nextId:number;
-  roster:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;removalsUsed:number;
+  roster:UnitInstance[];pendingRecruits:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;removalsUsed:number;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
   results:Outcome[];log:string[];history:Battle[];
 };
 
 export function newRun(seed:number):Run{
   return {
-    version:5,seed,stage:0,gold:encounters[0].gold,nextId:0,roster:[],spells:[],spellCasts:0,
+    version:5,seed,stage:0,gold:encounters[0].gold,nextId:0,roster:[],pendingRecruits:[],spells:[],spellCasts:0,
     shop:createShop(seed,0),removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[],
   };
 }
