@@ -18,7 +18,7 @@ export const units = {
   guard: { name:'木盾卫士', race:'human', hp:12, atk:2, text:'攻击时，获得'+GUARD_SHIELD+'护盾。' },
   archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:'与木盾卫士相邻时，永久获得+1攻击。每店一次。' },
   medic: { name:'战地医师', race:'human', hp:8, atk:1, text:'为一个随机相邻友方备战。下场战斗中，两者在场且该友方降至半血时，为其恢复至多'+MEDIC_HEAL+'生命。每战一次。' },
-  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。消灭至多'+NECROMANCER_LIMIT+'名相邻的骷髅兵、重甲骷髅或骷髅弓箭手。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
+  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。每摇消灭至多'+NECROMANCER_LIMIT+'名相邻的骷髅兵、重甲骷髅或骷髅弓箭手。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
   page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'在商店被消灭时，获得'+SKELETON_GOLD+'金币。' },
   orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'备战攻击力超过'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
   bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘其他友方亡灵被消灭时，下场+'+BONE_ATTACK_GAIN+'攻击。被消灭时，使亡灵法师下场+'+BONE_ATTACK_GAIN+'攻击。友方亡灵在战斗中阵亡时，本场+'+BONE_ATTACK_GAIN+'攻击。' },
@@ -31,7 +31,7 @@ export const units = {
   armoredOrc: { name:'重甲兽人', race:'orc', hp:24, atk:3, guardian:true, text:'与至少'+ORC_RIDER_NEIGHBORS+'名其他友方兽人相邻时，永久进化为兽人骑兵。' },
   slime: { name:'史莱姆', race:'monster', hp:6, atk:1, text:'在商店被移除时，使队伍中其余所有单位永久获得+'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。' },
   orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:3, text:'攻击时额外连击一次。每击杀一个敌人，永久获得+1/+1。' },
-  armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'在商店被消灭时，永久招募'+ARMORED_SKELETON_SPAWNS+'名骷髅兵。战斗中阵亡时，立即召唤'+ARMORED_SKELETON_SPAWNS+'名临时骷髅兵。' },
+  armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'在商店被消灭时，永久招募'+ARMORED_SKELETON_SPAWNS+'名骷髅兵，并放入随机空格。战斗中阵亡时，立即召唤'+ARMORED_SKELETON_SPAWNS+'名临时骷髅兵。' },
   bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:'招募时，随机获得1个法术。' }
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
@@ -49,7 +49,7 @@ export const RECRUIT_GAIN=3;
 export const spells = {
   'surge': {name:'魔力强化', price:3, text:'使相邻友方单位永久获得+2/+2。'},
   'fireball': {name:'火球术', price:4, text:'装填到下一战。开场消灭一个随机在场敌人。'},
-  'recruit': {name:'召唤法阵', price:2, text:'随机招募一名人类，永久获得+'+RECRUIT_GAIN+'攻击力和+'+RECRUIT_GAIN+'生命值。'}
+  'recruit': {name:'召唤法阵', price:2, text:'随机招募一名人类，永久获得+'+RECRUIT_GAIN+'/+'+RECRUIT_GAIN+'，并放入一个随机空格。'}
 } as const;
 export type SpellKind = keyof typeof spells;
 export const spellKinds=Object.keys(spells) as SpellKind[];

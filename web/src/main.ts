@@ -4,13 +4,13 @@ import {playbackFrames,type PlaybackFrame} from './playback.ts';
 import {encounters,spells,units,wizardEntryGain,type Kind,type SpellKind} from './data.ts';
 import {advance,commitBattleWindow,newRun,removeUnit,simulateBattleWindow,startBattle,type Run} from './engine.ts';
 import {FIELD_LIMIT,type Battle,type BattleWindow} from './battle/model.ts';
-import {preparedStats} from './shop/model.ts';
+import {preparedStats,unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {loadRun,saveRun} from './save.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
-import {emptyBoard,playShopSpin,renderReels} from './view/reels.ts';
+import {playShopSpin} from './view/reels.ts';
 import {
-  changeShopPane,paintShopControls,paintSpinSummary,permanentStats,renderRemoval,renderShop,
+  changeShopPane,paintShopBoard,paintShopControls,paintSpinSummary,renderRemoval,renderShop,
   slimeRemovalBenefit,type ShopPane,
 } from './view/shop.ts';
 import {paintBattle,renderBattle,renderResult} from './view/battle.ts';
@@ -50,13 +50,14 @@ dialog.addEventListener('close',()=>{
 
 const ruleText='<p>七店七战，落败或平局结束远征。每间商店发放金币，余额结转。第 2、4、6 战获胜各得 1 个移除标记。</p>'+
   '<p>货架每次提供三名单位和一张法术，刷新花费 1 金。每店摇盘依次花费 1、1、2、2、3、3 金，依此递增。</p>'+
-  '<p>4×4 轮盘从队伍和未用法术中随机抽取。横、竖、斜角均算相邻。停盘后依次结算法术、棋子联动和进化。</p>'+
+  '<p>进店与招募后，轮盘实时显示队伍。摇盘从队伍和未用法术中随机抽取并触发联动。横、竖、斜角均算相邻。'+
+  '摇盘中召唤的单位立即寻找随机空格入盘，受变化影响的棋子会继续结算。</p>'+
   '<p>开战时全队参加随机抽取，最多 '+FIELD_LIMIT+' 名首发，其余候补。每有两名已部署的招募单位最终阵亡，补一名候补。'+
   '战斗召唤立即入场。场上单位全部阵亡的一方落败。</p>';
 
 function showUnit(button:HTMLButtonElement,kind:Kind){
   const unit=run.roster.find(piece=>piece.id===button.dataset.unitId);
-  const stats=unit?permanentStats(unit):{attack:Number(button.dataset.attack)||units[kind].atk,
+  const stats=unit?unitStats(unit):{attack:Number(button.dataset.attack)||units[kind].atk,
     health:Number(button.dataset.health)||units[kind].hp};
   const bonus=unit?preparedStats(run.shop.preparations,unit.id):undefined;
   const target=unit&&run.roster.find(piece=>piece.id===run.shop.preparations.medicTargets[unit.id]);
@@ -75,7 +76,7 @@ document.addEventListener('unit-info',((event:CustomEvent)=>{
 }) as EventListener);
 
 async function spinShop(){
-  const previous=run.shop.lastSpin?.settled??emptyBoard;
+  const previous=wheelFrame(run.shop.board,run.roster,run.shop.preparations);
   const paidGold=run.gold-spinCost(run.shop.paidSpins);
   const result=resolveSpin(run);
   if(!result)return;
@@ -91,7 +92,7 @@ async function spinShop(){
     await playShopSpin(host,previous,result,controller.signal,event=>{message.textContent=event.text;});
   }catch(error){
     console.error('Unable to play the shop reels',error);
-    renderReels(host,result.settled);
+    paintShopBoard(app,run);
   }finally{
     spinController=undefined;
     if(host.isConnected){
@@ -265,14 +266,24 @@ app.addEventListener('click',event=>{
   }
   if(button.dataset.buyIndex!==undefined){
     const index=Number(button.dataset.buyIndex);
+    const priorCount=run.roster.length;
     if(!buy(run,index))return;
     const offer=run.shop.offers[index];
     const keepFocus=document.activeElement===button;
     save();
+    if(!offer.spell)paintShopBoard(app,run);
     paintShopControls(app,run);
     if(keepFocus)button.closest('.offer')?.querySelector<HTMLElement>('.offer-art')?.focus({preventScroll:true});
     const extra=offer.kinds[0]==='king'?'与 2 名骷髅兵':offer.kinds[0]==='bat'?'，获得'+spells[run.spells.at(-1)!.kind].name:'';
-    app.querySelector('#purchase-status')!.textContent=(offer.spell?'已购买 ':'已招募 ')+offer.title+extra+'，剩余 '+run.gold+' 金。';
+    const status=(offer.spell?'已购买 ':'已招募 ')+offer.title+extra+'，剩余 '+run.gold+' 金。';
+    app.querySelector('#purchase-status')!.textContent=status;
+    if(!offer.spell){
+      const added=new Set(run.roster.slice(priorCount).map(unit=>unit.id));
+      const onWheel=run.shop.board.filter(slot=>slot&&added.has(slot.id)).length;
+      const placement=onWheel===added.size?'已上盘':onWheel===0?'轮盘已满':
+        onWheel+' 名上盘，'+(added.size-onWheel)+' 名留在队伍';
+      app.querySelector('#spin-event')!.textContent='已招募 '+offer.title+extra+' · '+placement+'。';
+    }
     return;
   }
   if(button.dataset.removeId&&removalOpen){

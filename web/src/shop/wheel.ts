@@ -1,8 +1,14 @@
-import {shuffle,type RandomState} from '../battle/random.ts';
+import {pick,shuffle,type RandomState} from '../battle/random.ts';
 import type {ShopSlot,SpellInstance,UnitInstance} from './model.ts';
 
 export const WHEEL_WIDTH=4;
 export const WHEEL_SIZE=WHEEL_WIDTH**2;
+export const unitSlot=({id,kind}:UnitInstance)=>({type:'unit' as const,id,kind});
+
+export function randomOpenSlot(board:ShopSlot[],random:RandomState){
+  const open=[...board.keys()].filter(index=>board[index]===null);
+  return open.length?pick(open,random):undefined;
+}
 
 export function neighborSlots(index:number){
   const row=Math.floor(index/WHEEL_WIDTH);
@@ -18,7 +24,7 @@ export function neighborSlots(index:number){
 
 export function drawShopBoard(roster:UnitInstance[],spells:SpellInstance[],random:RandomState){
   const pool:ShopSlot[]=[
-    ...roster.map(({id,kind})=>({type:'unit' as const,id,kind})),
+    ...roster.map(unitSlot),
     ...spells.map(({id,kind})=>({type:'spell' as const,id,kind})),
   ];
   const board=shuffle(pool,random).slice(0,WHEEL_SIZE);

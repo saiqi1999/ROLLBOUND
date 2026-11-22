@@ -40,6 +40,8 @@ export function removeUnit(run:Run,id:string){
   if(run.phase!=='shop'||!removalMarkers(run))return false;
   const removed=detachShopUnit(run,id);
   if(!removed)return false;
+  const slot=run.shop.board.findIndex(symbol=>symbol?.id===id);
+  if(slot>=0)run.shop.board[slot]=null;
   run.removalsUsed++;
   if(removed.kind==='slime'){
     for(const unit of run.roster){
@@ -71,7 +73,7 @@ export function advance(run:Run){
   if(run.stage===encounters.length-1){run.phase='end';return;}
   run.stage++;
   run.gold+=encounters[run.stage].gold;
-  run.shop=createShop(run.seed,run.stage);
+  run.shop=createShop(run.seed,run.stage,run.roster);
   run.battle=null;
   run.history=[];
   run.log=[];

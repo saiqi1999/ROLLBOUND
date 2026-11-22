@@ -227,6 +227,38 @@
   background: radial-gradient(ellipse at 50% 80%, #435740, #34473b 76%);
 }
 .cell .sprite { width: min(94%, 96px); height: 94%; min-height: 0; filter: drop-shadow(0 2px 1px #18271c80); }
+.cell.unit { grid-template-rows: minmax(0, 1fr) auto; }
+.cell.unit > .sprite { width: min(90%, 92px); height: 100%; }
+.wheel-stats {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(2px, .75vw, 10px);
+  max-width: 100%;
+  padding: 1px 4px;
+  margin-bottom: 2px;
+  background: #19281fe0;
+  border-radius: 4px;
+  color: #f8f2de;
+  font: 700 clamp(.64rem, 1.38vw, .91rem)/1.25 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.wheel-stats span { white-space: nowrap; }
+.wheel-stats .increased { color: #ffdb8b; }
+.wheel-health { color: #f9b7bd; }
+.wheel-health.increased { color: #b5ecae; }
+.wheel-buff-fx {
+  position: absolute;
+  inset: 0 3% 8%;
+  z-index: 1;
+  background-repeat: no-repeat;
+  background-position: 0 50%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
 .cell.spell { border-color: #8c7751; background: radial-gradient(ellipse, #66543b, #3e4431); }
 .cell.empty { border-color: #425244; background: #26382e; box-shadow: inset 0 0 11px #213127; }
 .cell.lit { border-color: #f4c977; background: #625739; box-shadow: inset 0 0 12px #d9ad5433; }

@@ -2,17 +2,13 @@ import {encounters,REFRESH_COST,SLIME_REMOVAL_GAIN,spells,units,wizardEntryGain,
 import {canStartBattle,removalMarkers,type Run} from '../engine.ts';
 import {FIELD_LIMIT} from '../battle/model.ts';
 import {scenery} from '../landscape.ts';
-import {preparedStats,type UnitInstance} from '../shop/model.ts';
+import {preparedStats,unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
 import {canSpin,spinCost} from '../shop/rules.ts';
 import {art,coin,header,heart,spellArt,unitTags} from './common.ts';
-import {emptyBoard,renderReels} from './reels.ts';
+import {renderReels} from './reels.ts';
 
 export type ShopPane='wheel'|'shelf';
 export const slimeRemovalBenefit='其余所有单位永久获得 +'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。';
-
-export function permanentStats(unit:UnitInstance){
-  return {attack:units[unit.kind].atk+unit.gainedAttack,health:units[unit.kind].hp+unit.gainedHealth};
-}
 
 function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:string,prepared=''){
   return '<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+
@@ -24,7 +20,7 @@ function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:str
 function alliedRoster(run:Run){
   const groups=new Map<string,{unit:UnitInstance;count:number;prepared:string}>();
   for(const unit of run.roster){
-    const {attack,health}=permanentStats(unit);
+    const {attack,health}=unitStats(unit);
     const bonus=preparedStats(run.shop.preparations,unit.id);
     const medic=run.roster.find(other=>other.id===run.shop.preparations.medicTargets[unit.id]);
     const prepared=[
@@ -38,7 +34,7 @@ function alliedRoster(run:Run){
     else groups.set(key,{unit,count:1,prepared});
   }
   return [...groups.values()].map(({unit,count,prepared})=>{
-    const {attack,health}=permanentStats(unit);
+    const {attack,health}=unitStats(unit);
     return rosterButton(unit.kind,attack,health,count,unit.id,prepared);
   }).join('');
 }
@@ -99,6 +95,7 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
     (count?'<div class="roster">'+alliedRoster(run)+'</div>':'<p class="muted">从货架招募单位。</p>')+spellInventory(run);
 
   const symbols=count+run.spells.length;
+  const offWheel=run.roster.length-run.shop.board.filter(slot=>slot?.type==='unit').length;
   root.querySelector<HTMLButtonElement>('.mobile-shelf-cta')!.hidden=spinning||symbols!==0;
   const cost=spinCost(run.shop.paidSpins);
   const spin=root.querySelector<HTMLButtonElement>('[data-act="spin"]')!;
@@ -107,13 +104,14 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   root.querySelector<HTMLButtonElement>('[data-act="skip-spin"]')!.hidden=!spinning;
   root.querySelector('#wheel-status')!.textContent=spinning?'从左到右停盘':
     symbols===0?'招募单位或购买法术后可摇盘。':
-    run.gold<cost?'还差 '+(cost-run.gold)+' 金。':'可抽取 '+symbols+' 个符号 · 下次 '+spinCost(run.shop.paidSpins+1)+' 金';
+    run.gold<cost?'还差 '+(cost-run.gold)+' 金。':'可抽取 '+symbols+' 个符号'+
+      (offWheel?' · 盘外 '+offWheel+' 名':'')+' · 下次 '+spinCost(run.shop.paidSpins+1)+' 金';
 }
 
 export function paintSpinSummary(root:HTMLElement,run:Run){
   const spin=run.shop.lastSpin;
   root.querySelector('#spin-event')!.textContent=spin?(spin.events.at(-1)?.text??'本次未触发联动。'):
-    '停盘后结算相邻棋子和法术。';
+    '招募后实时上盘。摇盘触发联动。';
   const details=root.querySelector<HTMLDetailsElement>('#spin-summary')!;
   details.hidden=!spin?.events.length;
   details.querySelector('summary')!.textContent='上次停盘 · '+(spin?.events.length??0)+' 项效果';
@@ -122,6 +120,10 @@ export function paintSpinSummary(root:HTMLElement,run:Run){
     line.textContent=event.text;
     return line;
   }));
+}
+
+export function paintShopBoard(root:HTMLElement,run:Run){
+  renderReels(root.querySelector('#reels')!,wheelFrame(run.shop.board,run.roster,run.shop.preparations));
 }
 
 export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
@@ -148,7 +150,7 @@ export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
     '<div class="shop-tabs" aria-label="商店区域"><button data-shop-pane="wheel">轮盘</button>'+
     '<button data-shop-pane="shelf">货架</button></div><div class="shop-floor">'+
     '<section class="reel-panel" id="wheel-panel" aria-label="4×4 商店轮盘"><div class="reel-heading"><h2>构筑轮盘</h2>'+
-    '<small>横、竖、斜角相邻</small></div><div id="reels" class="wheel-board"></div><div class="spin-controls">'+
+    '<small>攻血含备战加成</small></div><div id="reels" class="wheel-board"></div><div class="spin-controls">'+
     '<button class="gold spin-button" data-act="spin" aria-describedby="wheel-status"></button><button data-act="skip-spin" hidden>跳过动画</button>'+
     '<button class="mobile-shelf-cta" data-shop-pane="shelf" hidden>去货架</button>'+
     '<small id="wheel-status"></small></div><p id="spin-event" class="spin-event" role="status"></p>'+
@@ -161,7 +163,7 @@ export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
     '<div class="depart"><span id="departure-note"></span><button class="primary" data-act="fight" aria-describedby="departure-note">'+
     '开始第 '+(run.stage+1)+' 战</button><button class="primary" data-act="reset" hidden>重新开局</button></div></section>';
   changeShopPane(root,pane);
-  renderReels(root.querySelector('#reels')!,run.shop.lastSpin?.settled??emptyBoard);
+  paintShopBoard(root,run);
   paintShopControls(root,run);
   paintSpinSummary(root,run);
   for(const canvas of root.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(canvas,canvas.dataset.scene!);
@@ -172,7 +174,7 @@ export function renderRemoval(root:HTMLElement,run:Run,selectedId:string|undefin
   const selected=run.roster.find(unit=>unit.id===selectedId);
   const benefit=selected?.kind==='slime'&&run.roster.length>1?slimeRemovalBenefit:'';
   const pieces=run.roster.map(unit=>{
-    const {id,kind}=unit,{attack,health}=permanentStats(unit);
+    const {id,kind}=unit,{attack,health}=unitStats(unit);
     return '<button class="removal-unit" data-remove-id="'+id+'" aria-pressed="'+(selectedId===id)+'" '+(markers?'':'disabled')+'>'+
       art(kind)+'<span><strong>'+units[kind].name+'</strong>'+unitTags(kind)+'<small>⚔ '+attack+'　'+heart+' '+health+'</small></span></button>';
   }).join('');
