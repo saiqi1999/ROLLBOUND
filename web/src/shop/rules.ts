@@ -1,6 +1,7 @@
 import {
   ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,
-  ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SKELETON_GOLD,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,canEvolveOrc,hasGuardian,humanKinds,
+  ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SKELETON_GOLD,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,WEREWOLF_RECRUIT_GAIN,
+  canEvolveOrc,eliteOrcEvolutionGain,hasGuardian,humanKinds,
   spellKinds,spellOffer,spells,unitKinds,unitOffer,units,wizardEntryGain,
   type Kind,type SpellKind,
 } from '../data.ts';
@@ -78,7 +79,9 @@ export function buy(run:Run,index:number){
   offer.sold=true;
   if(offer.spell)addSpell(run,offer.spell);
   else{
+    const wolves=run.roster.filter(unit=>unit.kind==='werewolf');
     const recruits=offer.kinds.map(kind=>recruit(run,kind));
+    for(const wolf of wolves)grantGrowth(wolf,{attack:WEREWOLF_RECRUIT_GAIN,health:WEREWOLF_RECRUIT_GAIN});
     const board=run.shop.board;
     const random=previewRandom(run.seed,run.stage,run.nextId);
     for(const unit of recruits){
@@ -355,6 +358,7 @@ export function resolveEvolutions(run:Run,spin?:Spin){
   const onWheel=spin?onBoard(spin):[];
   const wheelIds=new Set(onWheel.map(unit=>unit.id));
   const order=[...onWheel,...run.roster.filter(unit=>!wheelIds.has(unit.id))];
+  const elites=run.roster.filter(unit=>unit.kind==='eliteOrc');
   for(const unit of order){
     if(spin?.evolved.has(unit.id))continue;
     const attack=unitStats(unit).attack;
@@ -364,12 +368,20 @@ export function resolveEvolutions(run:Run,spin?:Spin){
     const next=canEvolveOrc(unit.kind,attack)?'armoredOrc':
       unit.kind==='armoredOrc'&&nearby.length>=ORC_RIDER_NEIGHBORS?'orcRider':undefined;
     if(!next)continue;
-    const text=name(unit)+'永久进化为'+units[next].name+'。';
+    const original=name(unit);
     unit.kind=next;
+    let gain=0;
+    for(const elite of elites){
+      const triggers=elite.evolutionTriggers??0;
+      gain+=eliteOrcEvolutionGain(triggers);
+      elite.evolutionTriggers=triggers+1;
+    }
+    if(gain)grantGrowth(unit,{attack:gain,health:gain});
     if(spin){
       spin.evolved.add(unit.id);
       if(slot>=0)writeSpinSlot(spin,slot,unitSlot(unit));
-      recordEffect(spin,text,[unit.id,...nearby.map(other=>other.id)],[unit.id]);
+      const text=original+'永久进化为'+name(unit)+'。'+(gain?'精英兽人使其永久获得+'+gain+'/+'+gain+'。':'');
+      recordEffect(spin,text,[unit.id,...[...nearby,...elites].map(other=>other.id)],[unit.id]);
     }else if(slot>=0){
       board[slot]=unitSlot(unit);
     }

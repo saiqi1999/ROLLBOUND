@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {encounters,spellOffer,unitOffer} from '../src/data.ts';
+import {encounters,spellOffer,unitEffectText,unitOffer} from '../src/data.ts';
 import {advance,canStartBattle,newRun,removalMarkers,removeUnit,startBattle} from '../src/engine.ts';
 import {unitStats} from '../src/shop/model.ts';
 import {loadRun,saveRun} from '../src/save.ts';
@@ -94,6 +94,25 @@ test('buying a necromancer creates distinct units, and a bat grants a determinis
     assert.equal(candidate.shop.paidSpins,0);
   }
   assert.deepEqual(restored,run);
+});
+
+test('each successful unit purchase grows wolves already in the roster once',()=>{
+  const run=newRun(144);
+  run.shop.offers=[unitOffer('werewolf'),unitOffer('werewolf'),unitOffer('king'),spellOffer('recruit')];
+  assert.ok(buy(run,0));
+  const [first]=run.roster;
+  assert.deepEqual(unitStats(first),{attack:3,health:8});
+  assert.ok(buy(run,1));
+  const second=run.roster[1];
+  assert.deepEqual(unitStats(first),{attack:4,health:9});
+  assert.deepEqual(unitStats(second),{attack:3,health:8});
+  assert.ok(buy(run,2));
+  assert.ok(buy(run,3));
+  assert.equal(buy(run,2),false);
+  assert.deepEqual(unitStats(first),{attack:5,health:10});
+  assert.deepEqual(unitStats(second),{attack:4,health:9});
+  assert.deepEqual(run.roster.slice(2).map(unit=>[unit.kind,unit.gainedAttack,unit.gainedHealth]),
+    [['king',0,0],['page',0,0],['page',0,0]]);
 });
 
 test('entering a new shop shows the existing team and a full wheel keeps all its slots on purchase',()=>{
@@ -360,6 +379,30 @@ test('armored orc needs two other neighboring Orcs and retains its permanent sta
     near(armor,left)&&near(armor,right),([armor])=>{armor.gainedHealth=9;});
   assert.equal(roster[0].kind,'orcRider');
   assert.equal(roster[0].gainedHealth,9);
+});
+
+test('an elite orc buffs each evolving ally in order and strengthens its own effect',()=>{
+  const {run,roster:[elite],roll}=sampleSpin(['eliteOrc','orc','orc'],[],(near,[elite,first,second])=>
+    !near(elite,first)||!near(elite,second),([,first,second])=>{
+    first.gainedAttack=3;
+    second.gainedAttack=3;
+  });
+  const evolving=roll.drawn.filter(slot=>slot?.kind==='orc');
+  assert.deepEqual(evolving.map(slot=>run.roster.find(unit=>unit.id===slot.id)?.kind),['armoredOrc','armoredOrc']);
+  assert.deepEqual(evolving.map(slot=>roll.settledStats[slot.id]),[{attack:7,health:25},{attack:8,health:26}]);
+  assert.deepEqual(unitStats(elite),{attack:4,health:16});
+  assert.equal(elite.evolutionTriggers,2);
+  assert.ok(roll.events.every(event=>event.focus.includes(elite.id)));
+  run.phase='result';
+  advance(run);
+  assert.match(unitEffectText('eliteOrc',elite),/永久获得\+3\/\+3，并强化此效果/);
+  assert.match(unitEffectText('eliteOrc'),/永久获得\+1\/\+1/);
+});
+
+test('the wizard description shows the current spell-scaled bonus and its cap',()=>{
+  assert.match(unitEffectText('wizard'),/获得\+1\/\+1/);
+  assert.match(unitEffectText('wizard',{spellCasts:2}),/获得\+3\/\+3。每施放一个法术，强化此效果/);
+  assert.match(unitEffectText('wizard',{spellCasts:9}),/获得\+4\/\+4/);
 });
 
 test('summoning circle places a boosted human who can trigger links in the same roll',()=>{

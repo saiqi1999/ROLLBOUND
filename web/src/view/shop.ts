@@ -1,4 +1,4 @@
-import {encounters,REFRESH_COST,SLIME_REMOVAL_GAIN,spells,units,wizardEntryGain,type Kind} from '../data.ts';
+import {encounters,REFRESH_COST,SLIME_REMOVAL_GAIN,spells,unitEffectText,units,type Kind} from '../data.ts';
 import {canStartBattle,removalMarkers,type Run} from '../engine.ts';
 import {FIELD_LIMIT} from '../battle/model.ts';
 import {scenery} from '../landscape.ts';
@@ -21,7 +21,7 @@ function alliedRoster(run:Run){
   const groups=new Map<string,{unit:UnitInstance;count:number}>();
   for(const unit of run.roster){
     const {attack,health}=unitStats(unit);
-    const key=[unit.kind,attack,health,unit.startingArmor].join(':');
+    const key=[unit.kind,attack,health,unit.startingArmor,unit.evolutionTriggers??0].join(':');
     const group=groups.get(key);
     if(group)group.count++;
     else groups.set(key,{unit,count:1});
@@ -68,9 +68,12 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
     const action=offer.spell?'购买':'招募';
     const state=offer.sold?'sold':run.gold<offer.price?'short':'ready';
     const label=state==='sold'?'已'+action:state==='short'?'金币不足':action;
+    const card=button.closest('.offer')!;
     button.disabled=spinning||state!=='ready';
     button.dataset.state=state;
-    button.closest('.offer')!.classList.toggle('sold',offer.sold);
+    card.classList.toggle('sold',offer.sold);
+    card.querySelector('.offer-effect')!.textContent=offer.spell?spells[offer.spell].text:
+      unitEffectText(offer.kinds[0],{spellCasts:run.spellCasts});
     button.innerHTML='<span>'+label+'</span>'+(offer.sold?'':'<span class="offer-cost" aria-hidden="true">'+coin+offer.price+'</span>');
     button.setAttribute('aria-label',offer.sold?label+' '+offer.title:action+' '+offer.title+' · '+offer.price+' 金币');
   }
@@ -131,13 +134,10 @@ export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
     const stats=spell?'<span class="unit-tags">一次性法术</span>':unitTags(unit)+
       '<span class="offer-stats">⚔ '+units[unit].atk+' <span class="offer-health">'+heart+' '+units[unit].hp+'</span></span>';
     const portrait=spell?spellArt(spell,'lead'):art(unit,'lead');
-    const description=spell?spells[spell].text:units[unit].text;
-    const gain=wizardEntryGain(run.spellCasts);
-    const wizard=unit==='wizard'?'<small class="unit-tags">当前增益 +'+gain+'/+'+gain+'</small>':'';
     return '<article class="offer" aria-labelledby="offer-title-'+index+'"><button class="offer-art'+(spell?' spell-diorama':'')+
       '" '+artButton+' aria-label="查看 '+offer.title+' 详情">'+(spell?'':'<canvas aria-hidden="true" data-scene="'+unit+'"></canvas>')+
       '<span class="party">'+portrait+'</span></button><div class="cardbody"><h2 id="offer-title-'+index+'">'+offer.title+
-      '</h2><div class="offer-meta">'+stats+'</div><p class="offer-effect">'+description+'</p>'+wizard+
+      '</h2><div class="offer-meta">'+stats+'</div><p class="offer-effect"></p>'+
       '<button class="gold offer-buy" data-buy-index="'+index+'"></button></div></article>';
   }).join('');
   root.innerHTML=header(run)+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+

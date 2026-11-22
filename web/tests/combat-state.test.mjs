@@ -118,6 +118,19 @@ test('a greatsword skeleton destroyed in combat leaves no copy',()=>{
   assert.equal(live(next,1).length,0);
 });
 
+test('a werebear gains armour equal to its current attack even on a fully blocked hit',()=>{
+  const {battle}=scenario([['werebear']],[['guard']]);
+  const [bear,target]=battle.units;
+  bear.bonus=4;
+  target.shield=10;
+  const events=[];
+  createEffects(battle,(phase,text,focus,detail)=>events.push({phase,text,focus,...detail})).attack(bear,target);
+  assert.equal(bear.shield,7);
+  assert.equal(target.hp,12);
+  assert.equal(target.shield,3);
+  assert.equal(actorFeedback(events).get(bear.id).shield,7);
+});
+
 test('opened spells can end a fight before the first combat tick and replay their effect',()=>{
   const run=scenario([['guard']],[['orc']]);
   run.battle.openingSpells=fireballs(1);

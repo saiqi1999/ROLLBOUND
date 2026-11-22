@@ -1,6 +1,8 @@
 import {units,type Kind,type Offer,type SpellKind} from '../data.ts';
 
-export type UnitInstance = {id:string;kind:Kind;gainedAttack:number;gainedHealth:number;startingArmor:number};
+export type UnitInstance = {
+  id:string;kind:Kind;gainedAttack:number;gainedHealth:number;startingArmor:number;evolutionTriggers?:number;
+};
 export type SpellInstance = {id:string;kind:SpellKind};
 export type OpeningSpell = SpellInstance&{kind:'fireball'};
 export type ShopSlot =

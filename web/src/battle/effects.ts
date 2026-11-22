@@ -75,7 +75,7 @@ export function createEffects(battle:Battle,record:RecordMoment){
 
   function attack(unit:Unit,target:Unit,followUp?:true){
     const damage=currentAttack(unit);
-    const shieldGain=unit.kind==='guard'?GUARD_SHIELD:0;
+    const shieldGain=unit.kind==='werebear'?damage:unit.kind==='guard'?GUARD_SHIELD:0;
     unit.shield+=shieldGain;
     const absorbed=Math.min(target.shield,damage);
     target.shield-=absorbed;

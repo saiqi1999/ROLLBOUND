@@ -1,7 +1,7 @@
 import './style.css';
 import {COMBAT_TICK_MS} from './timing.ts';
 import {playbackFrames,type PlaybackFrame} from './playback.ts';
-import {encounters,spells,units,wizardEntryGain,type Kind,type SpellKind} from './data.ts';
+import {encounters,spells,unitEffectText,units,WEREWOLF_RECRUIT_GAIN,type Kind,type SpellKind} from './data.ts';
 import {advance,commitBattleWindow,newRun,removeUnit,simulateBattleWindow,startBattle,type Run} from './engine.ts';
 import {FIELD_LIMIT,type Battle,type BattleWindow} from './battle/model.ts';
 import {unitStats,wheelFrame} from './shop/model.ts';
@@ -59,16 +59,15 @@ function showUnit(button:HTMLButtonElement,kind:Kind){
   const unit=run.roster.find(piece=>piece.id===button.dataset.unitId);
   const stats=unit?unitStats(unit):{attack:Number(button.dataset.attack)||units[kind].atk,
     health:Number(button.dataset.health)||units[kind].hp};
-  const gain=wizardEntryGain(run.spellCasts);
+  const text=unitEffectText(kind,{spellCasts:run.spellCasts,evolutionTriggers:unit?.evolutionTriggers});
   modal(units[kind].name,art(kind)+unitTags(kind)+'<p>攻击 '+stats.attack+'　生命 '+stats.health+'</p>'+
-    '<p>'+units[kind].text+'</p>'+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':'')+
-    (kind==='wizard'?'<p>当前增益 +'+gain+'/+'+gain+'</p>':''));
+    '<p>'+text+'</p>'+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':''));
 }
 
 document.addEventListener('unit-info',((event:CustomEvent)=>{
   const unit=event.detail as {kind:Kind;name:string;hp:number;maxHp:number;atk:number;shield:number;temporary?:true};
   modal(unit.name,art(unit.kind)+unitTags(unit.kind,unit.temporary)+'<p>攻击 '+unit.atk+'　生命 '+unit.hp+'/'+unit.maxHp+
-    '　护甲 '+unit.shield+'</p><p>'+units[unit.kind].text+'</p>');
+    '　护甲 '+unit.shield+'</p><p>'+unitEffectText(unit.kind)+'</p>');
 }) as EventListener);
 
 async function spinShop(){
@@ -271,14 +270,16 @@ app.addEventListener('click',event=>{
     paintShopControls(app,run);
     if(keepFocus)button.closest('.offer')?.querySelector<HTMLElement>('.offer-art')?.focus({preventScroll:true});
     const extra=offer.kinds[0]==='king'?'与 2 名骷髅兵':offer.kinds[0]==='bat'?'，获得'+spells[run.spells.at(-1)!.kind].name:'';
-    const status=(offer.spell?'已购买 ':'已招募 ')+offer.title+extra+'，剩余 '+run.gold+' 金。';
+    const growingWolves=offer.spell?0:run.roster.slice(0,priorCount).filter(unit=>unit.kind==='werewolf').length;
+    const growth=growingWolves?growingWolves+' 名狼人永久 +'+WEREWOLF_RECRUIT_GAIN+'/+'+WEREWOLF_RECRUIT_GAIN:'';
+    const status=(offer.spell?'已购买 ':'已招募 ')+offer.title+extra+(growth?'，'+growth:'')+'，剩余 '+run.gold+' 金。';
     app.querySelector('#purchase-status')!.textContent=status;
     if(!offer.spell){
       const added=new Set(run.roster.slice(priorCount).map(unit=>unit.id));
       const onWheel=run.shop.board.filter(slot=>slot&&added.has(slot.id)).length;
       const placement=onWheel===added.size?'已上盘':onWheel===0?'轮盘已满':
         onWheel+' 名上盘，'+(added.size-onWheel)+' 名留在队伍';
-      app.querySelector('#spin-event')!.textContent='已招募 '+offer.title+extra+' · '+placement+'。';
+      app.querySelector('#spin-event')!.textContent='已招募 '+offer.title+extra+' · '+placement+(growth?' · '+growth:'')+'。';
     }
     return;
   }
