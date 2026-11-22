@@ -39,7 +39,7 @@
   header nav { gap: 5px; }
   header nav b { font-size: 13px; }
 }
-@media (max-width: 360px) {
+@media (max-width: 400px) {
   header nav span:not(.now) { display: none; }
   header nav .now b::after { content: " / " attr(data-total); }
 }
