@@ -25,7 +25,7 @@ export function playbackFrames({events,ticks,outcome}:BattleWindow):PlaybackFram
 export function frameMessage(frame:PlaybackFrame|undefined){
   const moments=frame?.moments??[];
   const highlight=moments.find(moment=>moment.phase==='补员')??
-    moments.find(moment=>moment.phase==='召唤'||moment.phase==='复活'||moment.phase==='治疗'||moment.phase==='法术');
+    moments.find(moment=>moment.phase==='召唤'||moment.phase==='法术'||(moment.phase==='阵亡'&&moment.action==='empower'));
   if(highlight)return {phase:highlight.phase,text:highlight.text};
   const attacks=moments.filter(moment=>moment.action==='attack');
   const followUp=attacks.find(moment=>moment.followUp);
@@ -36,13 +36,11 @@ export function frameMessage(frame:PlaybackFrame|undefined){
   return {phase:moment.phase,text:moment.text};
 }
 
-export type ActorEffect = 'fireball'|'heal'|'empower';
+export type ActorEffect = 'fireball'|'empower';
 export type ActorFeedback = {
   attack?:true;
-  heal?:true;
   hit?:true;
   death?:true;
-  revive?:true;
   marked?:true;
   damage:number;
   shield:number;
@@ -72,10 +70,8 @@ export function actorFeedback(moments:Moment[]){
     }
     for(const id of moment.focus)feedback(id).marked=true;
     if(action==='death')for(const id of moment.focus)feedback(id).death=true;
-    if(action==='heal'&&source)feedback(source).heal=true;
-    if(moment.phase==='复活'&&source)feedback(source).revive=true;
     if(spell==='fireball'&&target)feedback(target).hit=true;
-    const effect=spell??(action==='heal'||action==='empower'?action:undefined);
+    const effect=spell??(action==='empower'?action:undefined);
     const recipients=valueTargets??(target?[target]:[]);
     for(const id of recipients){
       const cue=feedback(id);

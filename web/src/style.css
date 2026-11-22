@@ -250,6 +250,15 @@
 .wheel-stats .increased { color: #ffdb8b; }
 .wheel-health { color: #f9b7bd; }
 .wheel-health.increased { color: #b5ecae; }
+.wheel-guardian {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 10px;
+  background: #add5ef;
+  clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+}
 .wheel-buff-fx {
   position: absolute;
   inset: 0 3% 8%;

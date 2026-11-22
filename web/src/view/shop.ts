@@ -2,7 +2,7 @@ import {encounters,REFRESH_COST,SLIME_REMOVAL_GAIN,spells,units,wizardEntryGain,
 import {canStartBattle,removalMarkers,type Run} from '../engine.ts';
 import {FIELD_LIMIT} from '../battle/model.ts';
 import {scenery} from '../landscape.ts';
-import {preparedStats,unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
+import {unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
 import {canSpin,spinCost} from '../shop/rules.ts';
 import {art,coin,header,heart,spellArt,unitTags} from './common.ts';
 import {renderReels} from './reels.ts';
@@ -10,32 +10,25 @@ import {renderReels} from './reels.ts';
 export type ShopPane='wheel'|'shelf';
 export const slimeRemovalBenefit='其余所有单位永久获得 +'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。';
 
-function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:string,prepared=''){
+function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:string,armor=0){
   return '<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+
     '"'+(id?' data-unit-id="'+id+'"':'')+'>'+art(kind)+'<span>'+units[kind].name+
-    '<small>⚔ '+attack+'　'+heart+' '+health+(prepared?' · '+prepared:'')+'</small></span>'+
+    '<small>⚔ '+attack+'　'+heart+' '+health+(armor?' · 护甲 '+armor:'')+'</small></span>'+
     (count>1?'<b>×'+count+'</b>':'')+'</button>';
 }
 
 function alliedRoster(run:Run){
-  const groups=new Map<string,{unit:UnitInstance;count:number;prepared:string}>();
+  const groups=new Map<string,{unit:UnitInstance;count:number}>();
   for(const unit of run.roster){
     const {attack,health}=unitStats(unit);
-    const bonus=preparedStats(run.shop.preparations,unit.id);
-    const medic=run.roster.find(other=>other.id===run.shop.preparations.medicTargets[unit.id]);
-    const prepared=[
-      ...(bonus.attack||bonus.health?['下战 +'+bonus.attack+'/+'+bonus.health]:[]),
-      ...(bonus.shield?[bonus.shield+' 护甲']:[]),
-      ...(medic?['治疗'+units[medic.kind].name]:[]),
-    ].join(' · ');
-    const key=[unit.kind,attack,health,prepared].join(':');
+    const key=[unit.kind,attack,health,unit.startingArmor].join(':');
     const group=groups.get(key);
     if(group)group.count++;
-    else groups.set(key,{unit,count:1,prepared});
+    else groups.set(key,{unit,count:1});
   }
-  return [...groups.values()].map(({unit,count,prepared})=>{
+  return [...groups.values()].map(({unit,count})=>{
     const {attack,health}=unitStats(unit);
-    return rosterButton(unit.kind,attack,health,count,unit.id,prepared);
+    return rosterButton(unit.kind,attack,health,count,unit.id,unit.startingArmor);
   }).join('');
 }
 
@@ -50,12 +43,12 @@ function enemyRoster(stage:number){
 
 function spellInventory(run:Run){
   const owned=run.spells.map(spell=>spell.kind);
-  const loaded=run.shop.preparations.openingSpells.length;
+  const loaded=run.shop.openingSpells.length;
   if(!owned.length&&!loaded)return '';
   return '<div class="spell-inventory"><h4>法术</h4><div class="roster">'+[...new Set(owned)].map(kind=>
     '<button class="roster-unit" data-spell="'+kind+'">'+spellArt(kind)+'<span>'+spells[kind].name+
     '</span><b>×'+owned.filter(spell=>spell===kind).length+'</b></button>',
-  ).join('')+(loaded?'<span class="loaded-spell">'+spellArt('fireball')+'下战已装填 ×'+loaded+'</span>':'')+'</div></div>';
+  ).join('')+(loaded?'<span class="loaded-spell">'+spellArt('fireball')+'已装填 ×'+loaded+'</span>':'')+'</div></div>';
 }
 
 export function changeShopPane(root:HTMLElement,pane:ShopPane){
@@ -123,7 +116,7 @@ export function paintSpinSummary(root:HTMLElement,run:Run){
 }
 
 export function paintShopBoard(root:HTMLElement,run:Run){
-  renderReels(root.querySelector('#reels')!,wheelFrame(run.shop.board,run.roster,run.shop.preparations));
+  renderReels(root.querySelector('#reels')!,wheelFrame(run.shop.board,run.roster));
 }
 
 export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
@@ -150,7 +143,7 @@ export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
     '<div class="shop-tabs" aria-label="商店区域"><button data-shop-pane="wheel">轮盘</button>'+
     '<button data-shop-pane="shelf">货架</button></div><div class="shop-floor">'+
     '<section class="reel-panel" id="wheel-panel" aria-label="4×4 商店轮盘"><div class="reel-heading"><h2>构筑轮盘</h2>'+
-    '<small>攻血含备战加成</small></div><div id="reels" class="wheel-board"></div><div class="spin-controls">'+
+    '</div><div id="reels" class="wheel-board"></div><div class="spin-controls">'+
     '<button class="gold spin-button" data-act="spin" aria-describedby="wheel-status"></button><button data-act="skip-spin" hidden>跳过动画</button>'+
     '<button class="mobile-shelf-cta" data-shop-pane="shelf" hidden>去货架</button>'+
     '<small id="wheel-status"></small></div><p id="spin-event" class="spin-event" role="status"></p>'+

@@ -15,7 +15,7 @@ for(const [id,name] of Object.entries(names)){
   manifest[id]={};
   const idle=id==='bat'?'Flying':'Idle';
   const walk=id==='bat'?'Flying':['lancer','templar'].includes(id)?'Walk01':'Walk';
-  for(const [move,suffix] of Object.entries({idle,walk,attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death',...(id==='medic'?{heal:'Heal'}:{})})){
+  for(const [move,suffix] of Object.entries({idle,walk,attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death'})){
     const src=PNG.sync.read(await readFile(path.join(root,name,name+' with shadows',name+'_'+suffix+'.png')));
     if(src.height!==100||src.width%100)throw Error('Invalid sheet: '+name+' '+move);
     const count=src.width/100, frame=80;
@@ -34,8 +34,7 @@ for(const [id,name] of Object.entries(names)){
 const healFxPath=new URL('../../Assets/Game/Art/Magic(Projectile)/Priest_Heal_effect.png',import.meta.url);
 const healFx=PNG.sync.read(await readFile(healFxPath));
 if(healFx.height!==100||healFx.width%100)throw Error('Invalid heal effects sheet');
-manifest.fx={heal:healFx.width/100,empower:healFx.width/100};
-await writeFile(path.join(dest,'fx-heal.png'),PNG.sync.write(healFx));
+manifest.fx={empower:healFx.width/100};
 
 // Shift the original greens to warm red while retaining each pixel's alpha.
 for(let i=0;i<healFx.data.length;i+=4){

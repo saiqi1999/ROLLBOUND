@@ -12,7 +12,7 @@ test('the simulation retains enough budget for the planned shop spins',()=>{
   assert.equal(run.gold,0);
   assert.equal(run.shop.refreshes,0);
   assert.deepEqual(run.roster.map(unit=>unit.kind),['soldier']);
-  assert.equal(run.shop.preparations.openingSpells.length,1);
+  assert.equal(run.shop.openingSpells.length,1);
   assert.equal(run.shop.paidSpins,2);
   assert.ok(canStartBattle(run));
 });

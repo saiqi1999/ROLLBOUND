@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {encounters,spellOffer,unitOffer} from '../src/data.ts';
 import {advance,canStartBattle,newRun,removalMarkers,removeUnit,startBattle} from '../src/engine.ts';
-import {preparedStats} from '../src/shop/model.ts';
+import {unitStats} from '../src/shop/model.ts';
+import {loadRun,saveRun} from '../src/save.ts';
 import {buy,recruit,refreshShop,resolveSpin,restoreShopBoard,shopOffers,spinCost} from '../src/shop/rules.ts';
 import {drawShopBoard,neighborSlots} from '../src/shop/wheel.ts';
 
@@ -149,28 +150,35 @@ test('an older save restores the preview and retains all units without rolling o
   assert.deepEqual(saved.shop.board,board);
 });
 
-test('archer growth is permanent and applies only once per shop even if several guards are adjacent',()=>{
-  const {run,roster,roll}=sampleSpin(['archer','guard','guard'],[],(near,[archer,left,right])=>
+test('archer grows once per roll beside any guardian, with no additional growth for multiple guardians',()=>{
+  const {run,roster,roll}=sampleSpin(['archer','templar','armoredSkeleton'],[],(near,[archer,left,right])=>
     near(archer,left)&&near(archer,right));
   const [archer,left,right]=roster;
   assert.equal(archer.gainedAttack,1);
   assert.deepEqual(new Set(roll.events[0].focus),new Set([archer.id,left.id,right.id]));
   run.gold=100;
-  for(let turn=0;turn<12;turn++)resolveSpin(run);
-  assert.equal(archer.gainedAttack,1);
-  assert.equal(run.shop.archersGrown.length,1);
+  for(let turn=0;turn<10;turn++)resolveSpin(run);
+  assert.ok(archer.gainedAttack>1);
+  const withoutGuardian=sampleSpin(['archer','guard'],[],(near,[bow,guard])=>near(bow,guard));
+  assert.equal(withoutGuardian.roster[0].gainedAttack,0);
 });
 
-test('preparations are grouped by ability, so same-name buffs take the strongest and different ones add',()=>{
+test('wheel buffs add permanently across rolls and battles, while a single roll deduplicates the same adjacency ability',()=>{
   const {run,roster}=sampleSpin(['wizard','swordsman','swordsman','soldier','guard','axeman'],[],(near,team)=>
     [0,1,2,5].every(index=>near(team[index],team[4])));
   const guard=roster[4];
-  assert.deepEqual(preparedStats(run.shop.preparations,guard.id),{attack:3,health:4,shield:3});
+  assert.deepEqual(unitStats(guard),{attack:4,health:15});
+  assert.equal(guard.startingArmor,3);
   assert.ok(startBattle(run));
   const fighter=run.battle.units.find(unit=>unit.id===guard.id);
-  assert.equal(fighter.hp,16);
+  assert.equal(fighter.hp,15);
   assert.equal(fighter.shield,3);
-  assert.equal(fighter.battleAttackBonus,3);
+  assert.equal(fighter.bonus,2);
+  run.phase='result';
+  advance(run);
+  assert.deepEqual(unitStats(guard),{attack:4,health:15});
+  assert.ok(startBattle(run));
+  assert.equal(run.battle.units.find(unit=>unit.id===guard.id).shield,3);
 });
 
 test('a skeleton destroyed in the shop grants two gold without replacing its instance',()=>{
@@ -181,6 +189,29 @@ test('a skeleton destroyed in the shop grants two gold without replacing its ins
   assert.deepEqual([king.gainedAttack,king.gainedHealth],[2,2]);
   assert.ok(roll.drawn.some(slot=>slot?.id===page.id));
   assert.ok(roll.settled.every(slot=>slot?.id!==page.id));
+});
+
+test('a priest triggers adjacent templar death effects without killing it, and a skeleton pays only on actual destruction',()=>{
+  const {run,roster,roll}=sampleSpin(['medic','templar','page','guard'],[],(near,[priest,templar,page])=>
+    near(priest,templar)&&near(priest,page));
+  const [priest,templar,page,guard]=roster;
+  assert.deepEqual(run.roster,roster);
+  assert.equal(run.gold,19);
+  assert.deepEqual(unitStats(priest),{attack:5,health:12});
+  assert.deepEqual(unitStats(guard),{attack:6,health:16});
+  assert.equal(templar.gainedAttack,0);
+  assert.equal(page.gainedAttack,0);
+  assert.match(roll.events[0].text,/牧师.*圣殿骑士/);
+});
+
+test('a priest summons from an armored skeleton once even when those recruits requeue the priest',()=>{
+  const {run,roster,roll}=sampleSpin(['medic','armoredSkeleton'],[],(near,[priest,armor])=>near(priest,armor));
+  const [priest,armor]=roster;
+  assert.equal(run.roster.filter(unit=>unit.kind==='page').length,3);
+  assert.ok(run.roster.includes(armor));
+  assert.ok(roll.settled.some(slot=>slot?.id===priest.id));
+  assert.ok(roll.settled.some(slot=>slot?.id===armor.id));
+  assert.equal(roll.events.filter(event=>event.text.includes('触发死亡效果')).length,1);
 });
 
 test('armored skeleton destruction fills randomized empty slots immediately and can chain a second destruction',()=>{
@@ -223,14 +254,13 @@ test('a space opened by a later unit rechecks vulnerable earlier slots',()=>{
   assert.deepEqual(roll.events[1].after.stats[lancer.id],{attack:4,health:7});
 });
 
-test('destroying an undead archer buffs the actual destroyer and another living archer on the wheel',()=>{
+test('destroying an undead archer adds permanent attack to the destroyer and to a surviving archer',()=>{
   const {run,roster}=sampleSpin(['king','bone','bone'],[],(near,[king,victim,observer])=>
     near(king,victim)&&!near(king,observer));
   const [king,victim,observer]=roster;
   assert.deepEqual(run.roster,[king,observer]);
-  assert.equal(preparedStats(run.shop.preparations,king.id).attack,3);
-  assert.equal(preparedStats(run.shop.preparations,observer.id).attack,3);
-  assert.equal(run.shop.preparations.buffs[victim.id],undefined);
+  assert.equal(king.gainedAttack,5);
+  assert.equal(observer.gainedAttack,3);
 });
 
 test('a shared target is destroyed by the first necromancer in display order exactly once',()=>{
@@ -246,7 +276,7 @@ test('spells resolve before links, and an Orc with six attack evolves before the
   const {run,roster,spells,roll}=sampleSpin(['orc','wizard'],['surge'],(near,[orc,wizard],[surge])=>
     near(surge,orc)&&near(wizard,orc));
   assert.ok(roll.events[0].focus.includes(spells[0].id));
-  assert.equal(roster[0].gainedAttack,2);
+  assert.equal(roster[0].gainedAttack,4);
   assert.equal(roster[0].kind,'armoredOrc');
   assert.equal(run.spellCasts,1);
   assert.equal(run.spells.length,0);
@@ -273,17 +303,16 @@ test('summoning circle places a boosted human who can trigger links in the same 
   const ownCast=roll.events.find(event=>event.text.startsWith('召唤法阵'));
   assert.ok(ownCast.after.board.some(slot=>slot?.id===recruit.id));
   assert.ok(ownCast.buffed.includes(recruit.id));
-  assert.equal(run.shop.preparations.openingSpells.length,1);
-  assert.equal(run.shop.preparations.openingSpells[0].kind,'fireball');
+  assert.equal(run.shop.openingSpells.length,1);
+  assert.equal(run.shop.openingSpells[0].kind,'fireball');
 });
 
-test('slime removal grants permanent growth and preserves each remaining instance and its preparation',()=>{
+test('slime removal grants permanent growth and preserves each remaining instance and its starting armour',()=>{
   const run=newRun(19);
   const orc=recruit(run,'orc',1,0);
   const slime=recruit(run,'slime');
   const guard=recruit(run,'guard',4,4);
-  run.shop.preparations.medicTargets[slime.id]=guard.id;
-  run.shop.preparations.buffs[guard.id]={soldier:{health:1}};
+  guard.startingArmor=3;
   run.results=['胜利','胜利'];
   run.shop.board[5]={type:'unit',id:slime.id,kind:'slime'};
   run.shop.board[6]={type:'unit',id:orc.id,kind:'orc'};
@@ -296,8 +325,7 @@ test('slime removal grants permanent growth and preserves each remaining instanc
   assert.equal(orc.kind,'armoredOrc');
   assert.equal(run.shop.board[5],null);
   assert.equal(run.shop.board[6].kind,'armoredOrc');
-  assert.equal(preparedStats(run.shop.preparations,guard.id).health,1);
-  assert.equal(run.shop.preparations.medicTargets[slime.id],undefined);
+  assert.equal(guard.startingArmor,3);
 });
 
 test('a committed shop result survives reload without consuming its spells or money again',()=>{
@@ -305,7 +333,32 @@ test('a committed shop result survives reload without consuming its spells or mo
   const saved=JSON.parse(JSON.stringify(run));
   assert.deepEqual(saved,run);
   assert.equal(saved.shop.paidSpins,1);
-  assert.equal(saved.shop.preparations.openingSpells.length,1);
+  assert.equal(saved.shop.openingSpells.length,1);
   assert.deepEqual(resolveSpin(saved),resolveSpin(run));
   assert.deepEqual(saved,run);
+});
+
+test('an open legacy shop converts its pending stat gains once when the run is saved in the new format',t=>{
+  const run=newRun(88);
+  const guard=recruit(run,'guard',2,3);
+  const {openingSpells,...shop}=run.shop;
+  const {startingArmor,...piece}=guard;
+  const storage=new Map([['rollbound.shop-wheel.v4',JSON.stringify({
+    ...run,version:4,roster:[piece],shop:{...shop,preparations:{
+      openingSpells,buffs:{[guard.id]:{wizard:{attack:1,health:1},axeman:{shield:3}}},
+    }},
+  })]]);
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
+    getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),
+  }});
+  t.after(()=>{
+    if(previous)Object.defineProperty(globalThis,'localStorage',previous);
+    else delete globalThis.localStorage;
+  });
+  const loaded=loadRun();
+  assert.equal(loaded.version,5);
+  assert.deepEqual(loaded.roster[0],{...guard,gainedAttack:3,gainedHealth:4,startingArmor:3});
+  assert.ok(saveRun(loaded));
+  assert.deepEqual(loadRun(),loaded);
 });

@@ -15,7 +15,7 @@ function scenario(allies,enemies){
   const recruits=allies.map(([kind])=>recruit(run,kind));
   run.battle=createBattle({
     id:'test',seed:365,allies:recruits,enemies:enemies.map(([kind])=>({kind,attack:0,health:0})),
-    preparations:run.shop.preparations,
+    openingSpells:run.shop.openingSpells,
   });
   run.phase='battle';
   for(const [side,team] of [allies,enemies].entries()){
@@ -75,7 +75,7 @@ test('a temporary skeleton dying does not pay for a reserve or enter the permane
   const {battle}=run;
   const enemy=live(battle,1)[0];
   enemy.bonus=99;
-  const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
+  const effects=createEffects(battle,()=>{});
   effects.attack(enemy,live(battle,0)[0]);
   const skeleton=live(battle,0).find(unit=>unit.temporary);
   effects.attack(enemy,skeleton);
@@ -87,16 +87,18 @@ test('a temporary skeleton dying does not pay for a reserve or enter the permane
   assert.equal(run.roster.length,18);
 });
 
-test('opening lethal damage revives a templar and only final deaths count toward reinforcement',()=>{
+test('opening lethal damage removes the templar and grants other deployed humans four attack and health',()=>{
   const {battle}=scenario([['guard']],Array.from({length:18},()=>['templar']));
   battle.openingSpells=fireballs(1);
   const {next,events}=simulateBattleWindow(battle,{tickLimit:0});
-  const revived=live(next,1).find(unit=>unit.revived);
-  assert.equal(revived.hp,maxHealth(revived));
-  assert.equal(live(next,1).length,16);
-  assert.equal(next.recruitedDeaths[1],0);
+  const survivors=live(next,1);
+  assert.equal(survivors.length,15);
+  assert.ok(survivors.every(unit=>currentAttack(unit)===6&&unit.hp===13&&maxHealth(unit)===13));
+  assert.equal(next.recruitedDeaths[1],1);
   assert.equal(next.reserves[1].length,2);
-  assert.ok(events.some(event=>event.phase==='复活'));
+  const fallen=next.units.find(unit=>unit.hp===0);
+  assert.equal(fallen.field,false);
+  assert.ok(events.some(event=>event.phase==='阵亡'&&event.action==='empower'));
 });
 
 test('an armored skeleton on the last tile summons before the loss check',()=>{
@@ -202,25 +204,10 @@ test('simultaneous strikes and movement share one fixed playback beat',()=>{
   assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
 });
 
-test('the prepared physician heals a living target once and cannot heal a slain target',()=>{
-  const {battle}=scenario([['medic',430,230],['guard',430,310]],[['orc',520,310]]);
-  battle.medicTargets['0-0']='0-1';
-  battle.units[1].hp=8;
-  charge(battle,'1-0','0-1');
-  const next=simulateBattleWindow(battle,{tickLimit:1});
-  assert.equal(next.next.units[1].hp,maxHealth(next.next.units[1]));
-  assert.ok(next.events.some(event=>event.action==='heal'&&event.target==='0-1'));
-  assert.equal(next.next.medicTargets['0-0'],undefined);
-  battle.units[1].hp=1;
-  const dead=simulateBattleWindow(battle,{tickLimit:1});
-  assert.ok(dead.events.some(event=>event.action==='death'&&event.focus.includes('0-1')));
-  assert.ok(!dead.events.some(event=>event.action==='heal'));
-});
-
 test('undead archers stack combat attack on each final friendly undead death',()=>{
   const {battle}=scenario([['bone',395,210],['page',430,310],['page',430,385]],[['orc',520,310]]);
   const enemy=battle.units.at(-1);
-  const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
+  const effects=createEffects(battle,()=>{});
   effects.attack(enemy,battle.units[1]);
   effects.attack(enemy,battle.units[2]);
   assert.equal(currentAttack(battle.units[0]),8);

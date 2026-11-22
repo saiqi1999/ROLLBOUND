@@ -1,7 +1,7 @@
 import {encounters,SLIME_REMOVAL_GAIN} from './data.ts';
 import {createBattle} from './battle/resolve.ts';
 import type {Battle,BattleWindow,Outcome} from './battle/model.ts';
-import type {ShopState,SpellInstance,UnitInstance} from './shop/model.ts';
+import {grantGrowth,type ShopState,type SpellInstance,type UnitInstance} from './shop/model.ts';
 import {createShop,detachShopUnit,resolveEvolutions} from './shop/rules.ts';
 import {COMBAT_TICK_MS} from './timing.ts';
 
@@ -10,7 +10,7 @@ export {currentAttack,maxHealth} from './battle/unit-state.ts';
 export {simulateBattleWindow} from './battle/resolve.ts';
 
 export type Run = {
-  version:4;seed:number;stage:number;gold:number;nextId:number;
+  version:5;seed:number;stage:number;gold:number;nextId:number;
   roster:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;removalsUsed:number;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
   results:Outcome[];log:string[];history:Battle[];
@@ -18,7 +18,7 @@ export type Run = {
 
 export function newRun(seed:number):Run{
   return {
-    version:4,seed,stage:0,gold:encounters[0].gold,nextId:0,roster:[],spells:[],spellCasts:0,
+    version:5,seed,stage:0,gold:encounters[0].gold,nextId:0,roster:[],spells:[],spellCasts:0,
     shop:createShop(seed,0),removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[],
   };
 }
@@ -45,8 +45,7 @@ export function removeUnit(run:Run,id:string){
   run.removalsUsed++;
   if(removed.kind==='slime'){
     for(const unit of run.roster){
-      unit.gainedAttack+=SLIME_REMOVAL_GAIN;
-      unit.gainedHealth+=SLIME_REMOVAL_GAIN;
+      grantGrowth(unit,{attack:SLIME_REMOVAL_GAIN,health:SLIME_REMOVAL_GAIN});
     }
     resolveEvolutions(run);
   }
@@ -60,7 +59,7 @@ export function startBattle(run:Run){
   run.battle=createBattle({
     id:run.seed+':'+run.stage,seed,allies:run.roster,
     enemies:encounter.units.map(kind=>({kind,attack:encounter.attack,health:encounter.health})),
-    preparations:run.shop.preparations,
+    openingSpells:run.shop.openingSpells,
   });
   run.phase='battle';
   run.history=[];

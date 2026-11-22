@@ -1,4 +1,3 @@
-import {preparedStats} from '../shop/model.ts';
 import {advanceCombatTick,spawnActor} from './combat.ts';
 import {createEffects} from './effects.ts';
 import {
@@ -6,7 +5,7 @@ import {
   type Battle,type BattlePlan,type BattleWindow,type Outcome,type RecordMoment,type Unit,
 } from './model.ts';
 import {shuffle} from './random.ts';
-import {deployed,grantBattleStats,makeUnit} from './unit-state.ts';
+import {deployed,makeUnit} from './unit-state.ts';
 
 function deploy(battle:Battle,unit:Unit){
   unit.field=true;
@@ -14,18 +13,15 @@ function deploy(battle:Battle,unit:Unit){
 }
 
 export function createBattle(plan:BattlePlan):Battle{
-  const allies=plan.allies.map(({id,kind,gainedAttack,gainedHealth})=>{
+  const allies=plan.allies.map(({id,kind,gainedAttack,gainedHealth,startingArmor})=>{
     const unit=makeUnit(id,kind,0,gainedAttack,gainedHealth);
-    const stats=preparedStats(plan.preparations,id);
-    grantBattleStats(unit,stats.attack,stats.health);
-    unit.shield=stats.shield;
+    unit.shield=startingArmor;
     return unit;
   });
   const enemies=plan.enemies.map(({kind,attack,health},index)=>makeUnit('1-'+index,kind,1,attack,health));
   const battle:Battle={
     id:plan.id,units:[...allies,...enemies],reserves:[[],[]],recruitedDeaths:[0,0],
-    openingResolved:false,openingSpells:structuredClone(plan.preparations.openingSpells),
-    medicTargets:{...plan.preparations.medicTargets},runtime:createCombat(plan.seed),
+    openingResolved:false,openingSpells:structuredClone(plan.openingSpells),runtime:createCombat(plan.seed),
   };
   const groups=[allies,enemies];
   for(const side of [0,1] as const){
@@ -63,13 +59,12 @@ export function simulateBattleWindow(start:Battle,{
   const record:RecordMoment=(phase,text,focus=[],detail={})=>{
     if(captureEvents)events.push({phase,text,focus,tick:battle.runtime.tick,...detail});
   };
-  const effects=createEffects(battle,byId,record);
+  const effects=createEffects(battle,record);
   if(!battle.openingResolved){
     battle.openingResolved=true;
     for(const spell of battle.openingSpells){
       effects.fireball(spell.id);
       deployReinforcements(battle,byId,record);
-      effects.healPreparedTargets();
     }
     battle.openingSpells=[];
     if(captureFrames&&events.length)ticks.push({state:structuredClone(battle),from:0,until:events.length,opening:true});
@@ -83,7 +78,6 @@ export function simulateBattleWindow(start:Battle,{
       attack:effects.attack,
     });
     deployReinforcements(battle,byId,record);
-    effects.healPreparedTargets();
     if(captureFrames)ticks.push({state:structuredClone(battle),from,until:events.length});
     outcome=fieldOutcome(battle);
   }

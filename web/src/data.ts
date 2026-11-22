@@ -2,7 +2,8 @@ export const races = {human:'人类', orc:'兽人', undead:'亡灵', monster:'�
 type Race = keyof typeof races;
 type UnitDefinition = {name:string; race:Race; hp:number; atk:number; text:string; guardian?:true};
 
-export const MEDIC_HEAL=12;
+export const TEMPLAR_DEATH_GAIN=4;
+export const SWORDSMAN_GAIN=1;
 export const ORC_ARMOR_THRESHOLD=5;
 export const ORC_RIDER_NEIGHBORS=2;
 export const ARMORED_SKELETON_SPAWNS=3;
@@ -16,22 +17,22 @@ export const BONE_ATTACK_GAIN=3;
 
 export const units = {
   guard: { name:'木盾卫士', race:'human', hp:12, atk:2, text:'攻击时，获得'+GUARD_SHIELD+'护盾。' },
-  archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:'与木盾卫士相邻时，永久获得+1攻击。每店一次。' },
-  medic: { name:'战地医师', race:'human', hp:8, atk:1, text:'为一个随机相邻友方备战。下场战斗中，两者在场且该友方降至半血时，为其恢复至多'+MEDIC_HEAL+'生命。每战一次。' },
+  archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:'与守护单位相邻时，永久获得+1攻击。' },
+  medic: { name:'牧师', race:'human', hp:8, atk:1, text:'触发相邻友方单位的死亡时效果。' },
   king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。每摇消灭至多'+NECROMANCER_LIMIT+'名相邻的骷髅兵、重甲骷髅或骷髅弓箭手。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
   page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'在商店被消灭时，获得'+SKELETON_GOLD+'金币。' },
-  orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'备战攻击力超过'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
-  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘其他友方亡灵被消灭时，下场+'+BONE_ATTACK_GAIN+'攻击。被消灭时，使亡灵法师下场+'+BONE_ATTACK_GAIN+'攻击。友方亡灵在战斗中阵亡时，本场+'+BONE_ATTACK_GAIN+'攻击。' },
-  soldier: { name:'士兵', race:'human', hp:6, atk:2, text:'使同盘其他友方人类下场+1生命。' },
-  swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:'使相邻友方人类下场+2/+2。' },
-  axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:'使相邻友方人类下场获得'+HUMAN_ARMOR+'初始护甲。阵亡时，使所有在场友方人类获得'+HUMAN_ARMOR+'护甲。' },
-  lancer: { name:'长枪兵', race:'human', hp:6, atk:2, text:'有相邻空格时，下场+2/+1。' },
-  templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'每场战斗首次阵亡时，满血复活并使所有友方在场人类获得+1/+1。' },
-  wizard: { name:'法师', race:'human', hp:7, atk:2, text:'使相邻友方下场+1/+1。本局每施放一个法术，此增益提高+1/+1，最高+4/+4。' },
+  orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'攻击力超过'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
+  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘其他友方亡灵被消灭时，永久+'+BONE_ATTACK_GAIN+'攻击。商店死亡时，使触发者永久+'+BONE_ATTACK_GAIN+'攻击。友方亡灵在战斗中阵亡时，本场+'+BONE_ATTACK_GAIN+'攻击。' },
+  soldier: { name:'士兵', race:'human', hp:6, atk:2, text:'使同盘其他友方人类永久+1生命。' },
+  swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:'使相邻友方人类永久+'+SWORDSMAN_GAIN+'/+'+SWORDSMAN_GAIN+'。' },
+  axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:'使相邻友方人类永久获得'+HUMAN_ARMOR+'初始护甲。死亡时，使其他友方人类获得'+HUMAN_ARMOR+'护甲。' },
+  lancer: { name:'长枪兵', race:'human', hp:6, atk:2, text:'有相邻空格时，永久+2/+1。' },
+  templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'死亡时，使其他友方人类获得+'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN+'。' },
+  wizard: { name:'法师', race:'human', hp:7, atk:2, text:'使相邻友方永久+1/+1。本局每施放一个法术，此增益提高+1/+1，最高+4/+4。' },
   armoredOrc: { name:'重甲兽人', race:'orc', hp:24, atk:3, guardian:true, text:'与至少'+ORC_RIDER_NEIGHBORS+'名其他友方兽人相邻时，永久进化为兽人骑兵。' },
   slime: { name:'史莱姆', race:'monster', hp:6, atk:1, text:'在商店被移除时，使队伍中其余所有单位永久获得+'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。' },
   orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:3, text:'攻击时额外连击一次。每击杀一个敌人，永久获得+1/+1。' },
-  armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'在商店被消灭时，永久招募'+ARMORED_SKELETON_SPAWNS+'名骷髅兵，并放入随机空格。战斗中阵亡时，立即召唤'+ARMORED_SKELETON_SPAWNS+'名临时骷髅兵。' },
+  armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'死亡时，招来'+ARMORED_SKELETON_SPAWNS+'名骷髅兵。商店中永久入队并寻找空格上盘，战斗中立即召唤临时单位。' },
   bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:'招募时，随机获得1个法术。' }
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
@@ -48,7 +49,7 @@ export const canEvolveOrc = (kind:Kind,attack:number) => kind==='orc'&&attack>OR
 export const RECRUIT_GAIN=3;
 export const spells = {
   'surge': {name:'魔力强化', price:3, text:'使相邻友方单位永久获得+2/+2。'},
-  'fireball': {name:'火球术', price:4, text:'装填到下一战。开场消灭一个随机在场敌人。'},
+  'fireball': {name:'火球术', price:4, text:'装填。开场消灭一个随机在场敌人。'},
   'recruit': {name:'召唤法阵', price:2, text:'随机招募一名人类，永久获得+'+RECRUIT_GAIN+'/+'+RECRUIT_GAIN+'，并放入一个随机空格。'}
 } as const;
 export type SpellKind = keyof typeof spells;
@@ -58,13 +59,37 @@ export function spellOffer(spell:SpellKind):Offer{
   return {title:spells[spell].name,kinds:[],price:spells[spell].price,sold:false,spell};
 }
 export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number; gold:number}[] = [
-  {name:'边境巡队',camp:'边境',units:['orc','orc','bone'],health:-3,attack:-1,gold:20},
-  {name:'灰骨哨所',camp:'哨所',units:['orc','orc','bone','bone'],health:-2,attack:-1,gold:8},
-  {name:'裂牙先锋',camp:'裂牙',units:['orc','orc','orc','bone','bone'],health:2,attack:0,gold:10},
-  {name:'黑铁前线',camp:'黑铁',units:['axeman','swordsman','soldier','guard','lancer','medic'],health:0,attack:0,gold:12},
-  {name:'荒原围军',camp:'荒原',units:['armoredOrc','orc','orc','orc','bone','bone','bone'],health:9,attack:2,gold:14},
-  {name:'铁誓军团',camp:'铁誓',units:['templar','axeman','swordsman','soldier','guard','medic','archer','archer'],health:2,attack:3,gold:16},
-  {name:'暮色王庭',camp:'王庭',units:['king','king','page','page','page','orc','orc','bone','bone'],health:13,attack:5,gold:18}
+  {
+    name:'边境巡队',camp:'边境',health:-2,attack:-1,gold:20,
+    units:['orc','orc','bone','page'],
+  },
+  {
+    name:'灰骨哨所',camp:'哨所',health:-2,attack:-1,gold:8,
+    units:['orc','orc','orc','bone','bone'],
+  },
+  {
+    name:'裂牙先锋',camp:'裂牙',health:2,attack:0,gold:10,
+    units:['orc','orc','orc','bone','bone','orcRider','armoredOrc'],
+  },
+  {
+    name:'黑铁前线',camp:'黑铁',health:2,attack:1,gold:12,
+    units:['axeman','templar','swordsman','soldier','guard','lancer','medic','archer','archer','wizard'],
+  },
+  {
+    name:'荒原围军',camp:'荒原',health:10,attack:3,gold:14,
+    units:['armoredOrc','orcRider','orcRider','orc','orc','bone','bone','bone','armoredSkeleton',
+      'orc','orc','armoredOrc'],
+  },
+  {
+    name:'铁誓军团',camp:'铁誓',health:11,attack:5,gold:16,
+    units:['templar','axeman','swordsman','swordsman','soldier','guard','medic','archer','archer',
+      'guard','wizard','lancer','archer','axeman','archer'],
+  },
+  {
+    name:'暮色王庭',camp:'王庭',health:12,attack:5,gold:18,
+    units:['king','king','armoredSkeleton','armoredSkeleton','orcRider','orcRider','armoredOrc','page','page',
+      'orc','orc','bone','bone','bone','bone','bone','orc','orc'],
+  },
 ];
 export const REFRESH_COST = 1;
 export const REQUIRED_WINS = encounters.length;

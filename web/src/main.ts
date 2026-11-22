@@ -4,7 +4,7 @@ import {playbackFrames,type PlaybackFrame} from './playback.ts';
 import {encounters,spells,units,wizardEntryGain,type Kind,type SpellKind} from './data.ts';
 import {advance,commitBattleWindow,newRun,removeUnit,simulateBattleWindow,startBattle,type Run} from './engine.ts';
 import {FIELD_LIMIT,type Battle,type BattleWindow} from './battle/model.ts';
-import {preparedStats,unitStats,wheelFrame} from './shop/model.ts';
+import {unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {loadRun,saveRun} from './save.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
@@ -51,7 +51,7 @@ dialog.addEventListener('close',()=>{
 const ruleText='<p>七店七战，落败或平局结束远征。每间商店发放金币，余额结转。第 2、4、6 战获胜各得 1 个移除标记。</p>'+
   '<p>货架每次提供三名单位和一张法术，刷新花费 1 金。每店摇盘依次花费 1、1、2、2、3、3 金，依此递增。</p>'+
   '<p>进店与招募后，轮盘实时显示队伍。摇盘从队伍和未用法术中随机抽取并触发联动。横、竖、斜角均算相邻。'+
-  '摇盘中召唤的单位立即寻找随机空格入盘，受变化影响的棋子会继续结算。</p>'+
+  '摇盘中获得的强化永久保留。召唤的单位立即寻找随机空格入盘，受变化影响的棋子会继续结算。</p>'+
   '<p>开战时全队参加随机抽取，最多 '+FIELD_LIMIT+' 名首发，其余候补。每有两名已部署的招募单位最终阵亡，补一名候补。'+
   '战斗召唤立即入场。场上单位全部阵亡的一方落败。</p>';
 
@@ -59,13 +59,9 @@ function showUnit(button:HTMLButtonElement,kind:Kind){
   const unit=run.roster.find(piece=>piece.id===button.dataset.unitId);
   const stats=unit?unitStats(unit):{attack:Number(button.dataset.attack)||units[kind].atk,
     health:Number(button.dataset.health)||units[kind].hp};
-  const bonus=unit?preparedStats(run.shop.preparations,unit.id):undefined;
-  const target=unit&&run.roster.find(piece=>piece.id===run.shop.preparations.medicTargets[unit.id]);
   const gain=wizardEntryGain(run.spellCasts);
   modal(units[kind].name,art(kind)+unitTags(kind)+'<p>攻击 '+stats.attack+'　生命 '+stats.health+'</p>'+
-    '<p>'+units[kind].text+'</p>'+(bonus&&(bonus.attack||bonus.health||bonus.shield)?
-      '<p>备战 +' +bonus.attack+' 攻击、+'+bonus.health+' 生命、+'+bonus.shield+' 护甲</p>':'')+
-    (target?'<p>下场治疗对象 · '+units[target.kind].name+'</p>':'')+
+    '<p>'+units[kind].text+'</p>'+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':'')+
     (kind==='wizard'?'<p>当前增益 +'+gain+'/+'+gain+'</p>':''));
 }
 
@@ -76,7 +72,7 @@ document.addEventListener('unit-info',((event:CustomEvent)=>{
 }) as EventListener);
 
 async function spinShop(){
-  const previous=wheelFrame(run.shop.board,run.roster,run.shop.preparations);
+  const previous=wheelFrame(run.shop.board,run.roster);
   const paidGold=run.gold-spinCost(run.shop.paidSpins);
   const result=resolveSpin(run);
   if(!result)return;

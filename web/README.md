@@ -14,6 +14,6 @@ npm run dev
 
 同一局域网的手机可通过终端显示的 Network 地址试玩。运行 `npm run build` 生成 `dist/`。使用 `npm test` 检查商店结算、战斗补员、阵亡成长和七战流程。
 
-运行 `node scripts/simulate-difficulty.mjs 500` 测算默认每店摇两次的策略。可以加 `--recruit` 比较扩军策略，或加 `--spin` 比较每店摇四次的策略。
+运行 `node scripts/simulate-difficulty.mjs 1200 200000` 测算默认每店摇两次的策略。相同种子下可加 `--recruit` 比较只招募、`--spin` 比较每店摇四次、`--grow` 比较后期逐步多摇，或用 `--skip-recruit=4` 测试第四店跳过单位购买。
 
 [商店轮盘改造方案](../docs/ROLLBOUND-商店轮盘改造方案.md)

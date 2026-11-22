@@ -1,17 +1,17 @@
-import {ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GUARD_SHIELD,HUMAN_ARMOR,MEDIC_HEAL,units} from '../data.ts';
-import {interruptActor,reviveActor,spawnActor} from './combat.ts';
+import {ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GUARD_SHIELD,HUMAN_ARMOR,TEMPLAR_DEATH_GAIN,units} from '../data.ts';
+import {interruptActor,spawnActor} from './combat.ts';
 import type {Battle,RecordMoment,Unit} from './model.ts';
 import {pick} from './random.ts';
-import {currentAttack,deployed,grantBattleStats,grantPermanentStats,makeUnit,maxHealth} from './unit-state.ts';
+import {currentAttack,deployed,grantBattleStats,grantPermanentStats,makeUnit} from './unit-state.ts';
 
 const label=(unit:Unit)=>(unit.side?'敌方':'我方')+units[unit.kind].name;
 
-export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordMoment){
+export function createEffects(battle:Battle,record:RecordMoment){
   const humanAllies=(source:Unit)=>battle.units.filter(other=>
     other.side===source.side&&units[other.kind].race==='human'&&deployed(other));
 
   function buff(
-    phase:'复活'|'阵亡'|'攻击',source:Unit,targets:Unit[],description:string,value:string,action?:'empower',
+    phase:'阵亡'|'攻击',source:Unit,targets:Unit[],description:string,value:string,action?:'empower',
   ){
     if(!targets.length)return;
     const ids=targets.map(unit=>unit.id);
@@ -28,7 +28,6 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
       skeleton.temporary=true;
       skeleton.field=true;
       battle.units.push(skeleton);
-      byId.set(id,skeleton);
       spawnActor(battle,skeleton);
       summoned.push(id);
     }
@@ -38,17 +37,6 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
   function resolveLethalHit(unit:Unit){
     unit.field=false;
     interruptActor(battle,unit);
-    if(unit.kind==='templar'&&!unit.revived){
-      unit.revived=true;
-      unit.field=true;
-      unit.hp=maxHealth(unit);
-      reviveActor(battle,unit);
-      const allies=humanAllies(unit);
-      for(const ally of allies)grantBattleStats(ally,1,1);
-      buff('复活',unit,allies,'满血复活，使所有在场友方人类本场 +1/+1。','+1/+1','empower');
-      return false;
-    }
-
     if(!unit.temporary)battle.recruitedDeaths[unit.side]++;
     record('阵亡',label(unit)+'阵亡。',[unit.id],{action:'death'});
     if(unit.kind==='axeman'){
@@ -56,26 +44,18 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
       for(const ally of allies)ally.shield+=HUMAN_ARMOR;
       buff('阵亡',unit,allies,'使所有在场友方人类获得 '+HUMAN_ARMOR+' 护甲。','+'+HUMAN_ARMOR+' 甲');
     }
+    if(unit.kind==='templar'){
+      const allies=humanAllies(unit);
+      for(const ally of allies)grantBattleStats(ally,TEMPLAR_DEATH_GAIN,TEMPLAR_DEATH_GAIN);
+      const gain='+'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN;
+      buff('阵亡',unit,allies,'使其他在场友方人类本场 '+gain+'。',gain,'empower');
+    }
     if(units[unit.kind].race==='undead'){
       const archers=battle.units.filter(other=>other.side===unit.side&&other.kind==='bone'&&deployed(other));
       for(const archer of archers)grantBattleStats(archer,BONE_ATTACK_GAIN,0);
       buff('阵亡',unit,archers,'使在场骷髅弓箭手本场 +'+BONE_ATTACK_GAIN+' 攻击。','+'+BONE_ATTACK_GAIN+' 攻','empower');
     }
     if(unit.kind==='armoredSkeleton')spawnSummonedUnits(unit);
-    return true;
-  }
-
-  function healPreparedTargets(){
-    for(const [medicId,targetId] of Object.entries(battle.medicTargets)){
-      const medic=byId.get(medicId),target=byId.get(targetId);
-      if(!medic||!target||!deployed(medic)||!deployed(target)||target.hp>maxHealth(target)/2)continue;
-      const amount=Math.min(MEDIC_HEAL,maxHealth(target)-target.hp);
-      target.hp+=amount;
-      delete battle.medicTargets[medicId];
-      record('治疗',label(medic)+'为'+units[target.kind].name+'恢复 '+amount+' 生命。',[medicId,targetId],{
-        action:'heal',source:medicId,target:targetId,value:'+'+amount,valueTargets:[targetId],
-      });
-    }
   }
 
   function fireball(source:string){
@@ -103,13 +83,13 @@ export function createEffects(battle:Battle,byId:Map<string,Unit>,record:RecordM
     record('攻击',label(unit)+(followUp?'连击':'攻击')+units[target.kind].name+'，造成 '+damage+' 点伤害。',[
       unit.id,target.id,
     ],{action:'attack',source:unit.id,target:target.id,damage,shieldGain,followUp});
-    const killed=target.hp===0&&resolveLethalHit(target);
-    if(killed&&unit.kind==='orcRider'){
+    if(target.hp>0)return;
+    resolveLethalHit(target);
+    if(unit.kind==='orcRider'){
       grantPermanentStats(unit,1,1);
       buff('攻击',unit,[unit],'击杀敌人，永久 +1/+1。','+1/+1','empower');
     }
-    healPreparedTargets();
   }
 
-  return {attack,fireball,healPreparedTargets};
+  return {attack,fireball};
 }

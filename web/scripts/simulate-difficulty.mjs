@@ -12,9 +12,9 @@ function mixSeed(seed){
   return (value^(value>>>15))>>>0;
 }
 
-function bestPurchase(run,random,budget,buySpells){
+function bestPurchase(run,random,budget,buySpells,buyUnits){
   const available=run.shop.offers.flatMap((offer,index)=>
-    !offer.sold&&offer.price<=budget&&(buySpells||!offer.spell)?[{offer,index}]:[]);
+    !offer.sold&&offer.price<=budget&&(offer.spell?buySpells:buyUnits)?[{offer,index}]:[]);
   let bestSpend=0,plans=[];
   for(let mask=1;mask<2**available.length;mask++){
     const combination=available.filter((_,index)=>mask&(1<<index));
@@ -27,28 +27,29 @@ function bestPurchase(run,random,budget,buySpells){
   return plans.length?shuffle(pick(plans,random),random):[];
 }
 
-export function spendShopGold(run,{spins=2,maxRefreshes=1,buySpells=true}={}){
+export function spendShopGold(run,{spins=2,maxRefreshes=1,buySpells=true,buyUnits=true}={}){
   const random={rng:mixSeed(run.seed^Math.imul(run.stage+1,0x7f4a7c15))};
-  const reserve=Array.from({length:spins},(_,index)=>spinCost(index)).reduce((total,cost)=>total+cost,0);
+  const spinCount=Array.isArray(spins)?spins[run.stage]:spins;
+  const reserve=Array.from({length:spinCount},(_,index)=>spinCost(index)).reduce((total,cost)=>total+cost,0);
   while(run.phase==='shop'&&run.gold>reserve){
     const budget=run.gold-reserve;
-    const purchases=bestPurchase(run,random,budget,buySpells);
+    const purchases=bestPurchase(run,random,budget,buySpells,buyUnits);
     if(purchases.length){
       for(const index of purchases)if(!buy(run,index))throw Error('Invalid simulated purchase');
     }else if(run.shop.refreshes>=maxRefreshes||budget<=REFRESH_COST||!refreshShop(run))break;
   }
-  for(let count=0;count<spins;count++){
+  for(let count=0;count<spinCount;count++){
     if(!resolveSpin(run))break;
   }
 }
 
-export function simulateDifficulty(count,offset=100000,{removeSlimes=false,...shopPolicy}={}){
+export function simulateDifficulty(count,offset=100000,{removeSlimes=false,skipRecruitRound,...shopPolicy}={}){
   const stages=encounters.map(()=>({reached:0,wins:0,losses:0,draws:0,unspent:0,roster:0,spins:0,full:0,reserves:0}));
   for(let index=0;index<count;index++){
     const run=newRun(mixSeed(index+offset));
     while(run.phase==='shop'){
       const stage=stages[run.stage];
-      spendShopGold(run,shopPolicy);
+      spendShopGold(run,run.stage+1===skipRecruitRound?{...shopPolicy,buyUnits:false}:shopPolicy);
       if(removeSlimes){
         while(run.roster.length>1&&removalMarkers(run)){
           const slime=run.roster.find(unit=>unit.kind==='slime');
@@ -81,13 +82,16 @@ export function simulateDifficulty(count,offset=100000,{removeSlimes=false,...sh
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const [sample,seedOffset,...flags]=process.argv.slice(2);
   const count=Number(sample??500),offset=Number(seedOffset??100000);
+  const skipFlag=flags.find(flag=>flag.startsWith('--skip-recruit='));
+  const skipRecruitRound=skipFlag&&Number(skipFlag.split('=')[1]);
   if(!Number.isSafeInteger(count)||count<1||!Number.isSafeInteger(offset)||offset<0||
-    flags.some(flag=>!['--remove-slimes','--recruit','--spin'].includes(flag))){
-    throw Error('Usage: node scripts/simulate-difficulty.mjs [count] [seed offset] [--remove-slimes] [--recruit|--spin]');
+    flags.some(flag=>flag!==skipFlag&&!['--remove-slimes','--recruit','--spin','--grow'].includes(flag))||
+    (skipFlag!==undefined&&(!Number.isSafeInteger(skipRecruitRound)||skipRecruitRound<2||skipRecruitRound>REQUIRED_WINS))){
+    throw Error('Usage: node scripts/simulate-difficulty.mjs [count] [seed offset] [--remove-slimes] [--recruit|--spin|--grow] [--skip-recruit=2–7]');
   }
   const shopPolicy=flags.includes('--recruit')?{spins:0,maxRefreshes:Infinity,buySpells:false}:
-    flags.includes('--spin')?{spins:4}:{};
-  const report=simulateDifficulty(count,offset,{...shopPolicy,removeSlimes:flags.includes('--remove-slimes')});
+    flags.includes('--spin')?{spins:4}:flags.includes('--grow')?{spins:[2,2,2,3,3,4,4]}:{};
+  const report=simulateDifficulty(count,offset,{...shopPolicy,skipRecruitRound,removeSlimes:flags.includes('--remove-slimes')});
   const percent=(n,d)=>d?(100*n/d).toFixed(1)+'%':'—';
   const mean=(n,d)=>d?(n/d).toFixed(2):'—';
   console.table(report.stages.map((row,index)=>({

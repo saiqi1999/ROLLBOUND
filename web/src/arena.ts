@@ -7,10 +7,10 @@ import {units,hasGuardian,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
-  Object.keys(units).map(k=>[k,k==='medic'?['idle','walk','attack','death','heal']:['idle','walk','attack','death']])
+  Object.keys(units).map(k=>[k,['idle','walk','attack','death']])
 ) as Record<Kind,string[]>;
-const effectStills={heal:1,empower:1,fireball:0} as const;
-type Pose = 'attack'|'heal'|'death';
+const effectStills={empower:1,fireball:0} as const;
+type Pose = 'attack'|'death';
 type ActorView = {
   root:Phaser.GameObjects.Container;
   sprite:Phaser.GameObjects.Sprite;
@@ -145,7 +145,6 @@ class Stage extends Phaser.Scene {
       clearHitFlash(sprite);
     }
     if(animate&&view.pose&&!sprite.anims.isPlaying)view.pose=undefined;
-    if(cue?.revive&&unit.field&&view.pose==='death')view.pose=undefined;
 
     // A unit that hit earlier in this tick can finish the swing before falling.
     if(cue?.death&&!unit.field){
@@ -158,8 +157,6 @@ class Stage extends Phaser.Scene {
       }else this.playPose(view,'death',animate);
     }else if(cue?.attack){
       this.playPose(view,'attack',animate);
-    }else if(cue?.heal){
-      this.playPose(view,'heal',animate);
     }else if(!view.pose){
       this.playLocomotion(view,animate);
     }

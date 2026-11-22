@@ -38,11 +38,6 @@ export function interruptActor(battle:Battle,unit:Unit){
   actor.phase='dead';
 }
 
-export function reviveActor(battle:Battle,unit:Unit){
-  const clock=battle.runtime, actor=clock?.actors[unit.id];
-  if(actor&&clock)recover(actor,clock.tick+1);
-}
-
 type CombatEffects = {
   motion:()=>void;
   attack:(attacker:Unit,target:Unit,followUp?:true)=>void;
@@ -86,7 +81,7 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
     .sort((a,b)=>Number(a.unit.side!==firstSide)-Number(b.unit.side!==firstSide));
   for(const fighter of hits){
     const {unit,actor}=fighter;
-    // Earlier hits can kill a later attacker, or interrupt it when a Templar revives.
+    // Earlier hits can kill a later attacker before its attack resolves.
     if(actor.phase!=='windup'||!deployed(unit))continue;
     const target=actor.targetId&&byId.get(actor.targetId);
     if(!target||!deployed(target.unit)||!withinRange(fighter,target)){

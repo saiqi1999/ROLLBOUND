@@ -1,12 +1,12 @@
 import type {Kind} from '../data.ts';
-import type {Preparations,UnitInstance} from '../shop/model.ts';
+import type {OpeningSpell,UnitInstance} from '../shop/model.ts';
 
 export type Point = {x:number;y:number};
 export type Side = 0|1;
 export type Outcome = '胜利'|'落败'|'平局';
 export type Unit = {
   id:string;kind:Kind;side:Side;hp:number;shield:number;bonus:number;healthBonus:number;field:boolean;
-  battleAttackBonus?:number;battleHealthBonus?:number;revived?:true;temporary?:true;
+  battleAttackBonus?:number;battleHealthBonus?:number;temporary?:true;
 };
 
 export type Actor = {
@@ -28,7 +28,7 @@ export type BattlePlan = {
   seed:number;
   allies:UnitInstance[];
   enemies:{kind:Kind;attack:number;health:number}[];
-  preparations:Preparations;
+  openingSpells:OpeningSpell[];
 };
 export type Battle = {
   id:string;
@@ -36,15 +36,14 @@ export type Battle = {
   reserves:[string[],string[]];
   recruitedDeaths:[number,number];
   openingResolved:boolean;
-  openingSpells:Preparations['openingSpells'];
-  medicTargets:Record<string,string>;
+  openingSpells:OpeningSpell[];
   runtime:CombatRuntime;
 };
 
-type Phase = '召唤'|'补员'|'法术'|'治疗'|'移动'|'攻击'|'阵亡'|'复活';
+type Phase = '召唤'|'补员'|'法术'|'移动'|'攻击'|'阵亡';
 export type Moment = {
   phase:Phase;text:string;focus:string[];tick:number;
-  action?:'attack'|'death'|'heal'|'empower';spell?:'fireball';
+  action?:'attack'|'death'|'empower';spell?:'fireball';
   source?:string;target?:string;value?:string;valueTargets?:string[];damage?:number;shieldGain?:number;followUp?:true;
 };
 export type RecordMoment = (
