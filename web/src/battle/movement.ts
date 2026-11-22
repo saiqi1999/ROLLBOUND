@@ -2,6 +2,11 @@ import {COMBAT,type Point} from './model.ts';
 
 const MIN_DISTANCE=COMBAT.separation;
 const EPSILON=1e-7;
+const FIELD_MARGIN=MIN_DISTANCE/2;
+const DETOUR_STEP=24;
+const neighbors=[
+  [1,0],[1,1],[1,-1],[0,1],[0,-1],[-1,1],[-1,-1],[-1,0],
+] as const;
 const directions=[0,.64,-.64,1.26,-1.26];
 const stopped={x:0,y:0};
 export const distance=(a:Point,b:Point)=>Math.hypot(a.x-b.x,a.y-b.y);
@@ -44,11 +49,64 @@ export function approachMotion(position:Point,target:Point,obstacles:Point[],spe
   return best;
 }
 
+function safeSegment(from:Point,to:Point,obstacles:Point[]){
+  const step={x:to.x-from.x,y:to.y-from.y};
+  return obstacles.every(obstacle=>contact(from,obstacle,step,stopped,1)>=1-EPSILON);
+}
+
+export function findDetour(start:Point,target:Point,obstacles:Point[],range:number){
+  // Anchor the search grid at the fighter's exact position so the first step also checks collisions.
+  const left=Math.ceil((FIELD_MARGIN-start.x)/DETOUR_STEP);
+  const top=Math.ceil((FIELD_MARGIN-start.y)/DETOUR_STEP);
+  const right=Math.floor((COMBAT.width-FIELD_MARGIN-start.x)/DETOUR_STEP);
+  const bottom=Math.floor((COMBAT.height-FIELD_MARGIN-start.y)/DETOUR_STEP);
+  const columns=right-left+1,rows=bottom-top+1;
+  const origin=-top*columns-left;
+  const previous=new Int32Array(columns*rows).fill(-1);
+  const queue=[origin];
+  previous[origin]=origin;
+  const position=(cell:number)=>({
+    x:start.x+(cell%columns+left)*DETOUR_STEP,
+    y:start.y+(Math.floor(cell/columns)+top)*DETOUR_STEP,
+  });
+  for(let i=0;i<queue.length;i++){
+    const cell=queue[i],from=position(cell);
+    if(distance(from,target)<=range-1){
+      const route:Point[]=[];
+      for(let node=cell;node!==origin;node=previous[node])route.push(position(node));
+      return route.reverse();
+    }
+    const column=cell%columns,row=Math.floor(cell/columns);
+    const reach=MIN_DISTANCE+DETOUR_STEP;
+    const nearby=obstacles.filter(other=>Math.abs(from.x-other.x)<=reach&&Math.abs(from.y-other.y)<=reach);
+    for(const [dx,dy] of neighbors){
+      const x=column+dx,y=row+dy;
+      if(x<0||x>=columns||y<0||y>=rows)continue;
+      const next=y*columns+x;
+      if(previous[next]!==-1||!safeSegment(from,position(next),nearby))continue;
+      previous[next]=cell;
+      queue.push(next);
+    }
+  }
+  return [];
+}
+
+export function followDetour(from:Point,waypoints:Point[],obstacles:Point[],speed:number){
+  while(waypoints.length&&distance(from,waypoints[0])<=EPSILON)waypoints.shift();
+  for(let i=waypoints.length-1;i>=0;i--){
+    const point=waypoints[i];
+    const gap=distance(from,point);
+    if(gap<=EPSILON||!safeSegment(from,point,obstacles))continue;
+    waypoints.splice(0,i);
+    const fraction=Math.min(1,speed/gap);
+    return {x:(point.x-from.x)*fraction,y:(point.y-from.y)*fraction};
+  }
+}
+
 function bounded(point:Point):Point{
-  const margin=MIN_DISTANCE/2;
   return {
-    x:Math.max(margin,Math.min(COMBAT.width-margin,point.x)),
-    y:Math.max(margin,Math.min(COMBAT.height-margin,point.y)),
+    x:Math.max(FIELD_MARGIN,Math.min(COMBAT.width-FIELD_MARGIN,point.x)),
+    y:Math.max(FIELD_MARGIN,Math.min(COMBAT.height-FIELD_MARGIN,point.y)),
   };
 }
 

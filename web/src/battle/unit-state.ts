@@ -1,10 +1,12 @@
 import {hasGuardian,units,type Kind} from '../data.ts';
 import type {Side,Unit} from './model.ts';
 import {type Actor,type CombatRuntime,profile} from './model.ts';
-import {approachMotion,distance} from './movement.ts';
+import {approachMotion,distance,findDetour,followDetour} from './movement.ts';
 import {pick} from './random.ts';
 
 export type Fighter = {unit:Unit;actor:Actor};
+const STALLED_AFTER_TICKS=2;
+const DETOUR_RETRY_TICKS=3;
 
 export function deployed(unit:Unit){
   return unit.field&&unit.hp>0;
@@ -31,12 +33,26 @@ export function withinRange(fighter:Fighter,target:Fighter){
   return distance(fighter.actor.position,target.actor.position)<=profile(fighter.unit.kind).range;
 }
 
-export function planMotion(fighter:Fighter,target:Fighter,live:Fighter[]){
+export function planMotion(fighter:Fighter,target:Fighter,live:Fighter[],tick:number){
   const {actor,unit}=fighter;
   const {speed,range}=profile(unit.kind);
+  const from=actor.position,to=target.actor.position;
+  if(distance(from,to)<=range)return {x:0,y:0};
   const obstacles=live.filter(other=>other!==fighter&&other!==target).map(other=>other.actor.position);
+  const detour=actor.detour;
+  const stalled=(actor.blockedTicks??0)>=STALLED_AFTER_TICKS;
+  const destination=detour?.waypoints.at(-1);
+  if(detour&&destination&&(!stalled||tick<detour.retryAt)&&distance(destination,to)<=range+speed/2){
+    const step=followDetour(from,detour.waypoints,[...obstacles,to],speed);
+    if(step)return step;
+  }
   const prefer=(Number(unit.id.split('-')[1])+unit.side)%2===0?1:-1;
-  return approachMotion(actor.position,target.actor.position,obstacles,speed,range,prefer);
+  const direct=approachMotion(from,to,obstacles,speed,range,prefer);
+  if((!stalled&&(direct.x||direct.y))||(detour&&tick<detour.retryAt))return direct;
+  const blockers=[...obstacles,to];
+  const waypoints=findDetour(from,to,blockers,range);
+  actor.detour={waypoints,retryAt:tick+DETOUR_RETRY_TICKS};
+  return followDetour(from,waypoints,blockers,speed)??direct;
 }
 
 export function recover(actor:Actor,readyAt:number){

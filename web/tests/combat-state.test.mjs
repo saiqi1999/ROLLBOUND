@@ -169,6 +169,37 @@ test('both sides move from the same snapshot without passing through each other'
   assert.deepEqual(p,[{x:300,y:300},{x:420,y:300}]);
 });
 
+test('a werewolf can get its first attack while pursuing an archer behind the frontline',()=>{
+  const run=newRun(247);
+  recruit(run,'armoredSkeleton');
+  recruit(run,'greatswordSkeleton');
+  const wolf=recruit(run,'werewolf');
+  assert.ok(startBattle(run));
+  const result=simulateBattleWindow(run.battle,{captureFrames:false,tickLimit:100});
+  const attacks=result.events.filter(event=>event.action==='attack'&&event.source===wolf.id);
+  assert.ok(attacks.length);
+});
+
+test('a blocked wolf steps sideways around a unit and strikes its original target after reload',()=>{
+  const {battle}=scenario([['werewolf',200,300]],[['orc',262,300],['bone',460,300]]);
+  for(const unit of live(battle,1))Object.assign(battle.runtime.actors[unit.id],{phase:'recover',readyAt:30});
+  const [wolf,blocker,archer]=battle.units.map(unit=>unit.id);
+  const actors=battle.runtime.actors;
+  actors[wolf].targetId=archer;
+  const first=simulateBattleWindow(battle,{tickLimit:1}).next;
+  const position=first.runtime.actors[wolf].position;
+  assert.ok(distance(position,actors[archer].position)>distance(actors[wolf].position,actors[archer].position));
+  assert.ok(first.runtime.actors[wolf].detour.waypoints.length);
+  const continued=simulateBattleWindow(JSON.parse(JSON.stringify(first)),{tickLimit:12});
+  const attack=continued.events.find(event=>event.action==='attack'&&event.source===wolf);
+  assert.equal(attack?.target,archer);
+  for(const {state} of continued.ticks){
+    const actors=state.runtime.actors;
+    assert.equal(actors[wolf].targetId,archer);
+    assert.ok(distance(actors[wolf].position,actors[blocker].position)>=COMBAT.separation-1e-6);
+  }
+});
+
 test('a lethal hit interrupts a queued strike, and the dead fighter is ignored by later hits',()=>{
   const {battle}=scenario([['orc',430,310],['archer',400,220]],[['guard',520,310]]);
   battle.units[2].hp=2;

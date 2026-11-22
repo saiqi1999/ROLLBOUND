@@ -2,6 +2,7 @@ import {COMBAT,profile,type Battle,type Point,type Unit} from './model.ts';
 import {distance,resolveMovement} from './movement.ts';
 import {canAct,chooseTarget,deployed,planMotion,recover,turnTowards,withinRange,type Fighter} from './unit-state.ts';
 
+const MOTION_EPSILON=1e-6;
 const homeSlots:Point[]=[
   {x:204,y:307},{x:251,y:429},{x:255,y:179},
   {x:132,y:390},{x:143,y:230},{x:199,y:517},
@@ -59,21 +60,35 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
     const {actor}=fighter;
     if(!canAct(actor))return {x:0,y:0};
     const target=chooseTarget(fighter,fighters,clock);
+    if(actor.targetId!==target?.unit.id){
+      actor.detour=undefined;
+      actor.blockedTicks=0;
+    }
     actor.targetId=target?.unit.id;
     if(!target){actor.phase='ready';return {x:0,y:0};}
     aim.set(fighter,target);
     turnTowards(actor,target.actor);
     actor.phase='approach';
-    return planMotion(fighter,target,fighters);
+    return planMotion(fighter,target,fighters,tick);
   });
   const moved=resolveMovement(snapshot,intents);
-  fighters.forEach(({actor},i)=>{actor.position=moved[i];});
-  if(moved.some((point,i)=>distance(point,snapshot[i])>1e-6))effects.motion();
+  fighters.forEach(({actor},i)=>{
+    actor.position=moved[i];
+    if(actor.phase==='approach'){
+      actor.blockedTicks=distance(moved[i],snapshot[i])>MOTION_EPSILON?0:(actor.blockedTicks??0)+1;
+      const dx=moved[i].x-snapshot[i].x;
+      if(actor.detour?.waypoints.length&&Math.abs(dx)>MOTION_EPSILON)actor.facing=dx>0?1:-1;
+    }
+  });
+  if(moved.some((point,i)=>distance(point,snapshot[i])>MOTION_EPSILON))effects.motion();
 
   for(const [fighter,target] of aim){
     if(!withinRange(fighter,target))continue;
+    turnTowards(fighter.actor,target.actor);
     fighter.actor.phase='windup';
     fighter.actor.readyAt=tick+profile(fighter.unit.kind).windup;
+    fighter.actor.detour=undefined;
+    fighter.actor.blockedTicks=0;
   }
 
   const firstSide=tick%2;

@@ -15,6 +15,8 @@ export type Actor = {
   phase:'ready'|'approach'|'windup'|'recover'|'dead';
   readyAt:number;
   targetId?:string;
+  blockedTicks?:number;
+  detour?:{waypoints:Point[];retryAt:number};
 };
 export type CombatRuntime = {
   tick:number;
