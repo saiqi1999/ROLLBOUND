@@ -1,5 +1,7 @@
+import {hasGuardian} from '../data.ts';
 import {COMBAT,profile,type Battle,type Point,type Unit} from './model.ts';
 import {distance,resolveMovement} from './movement.ts';
+import {shuffle} from './random.ts';
 import {canAct,chooseTarget,deployed,planMotion,recover,turnTowards,withinRange,type Fighter} from './unit-state.ts';
 
 const MOTION_EPSILON=1e-6;
@@ -39,9 +41,27 @@ export function interruptActor(battle:Battle,unit:Unit){
   actor.phase='dead';
 }
 
+export function deployUnit(battle:Battle,unit:Unit){
+  unit.field=true;
+  spawnActor(battle,unit);
+}
+
+function planAttackTargets(battle:Battle,fighter:Fighter,primary:Unit):Unit[]{
+  const {unit,actor}=fighter;
+  const extra=unit.tag==='triple'?2:unit.tag==='double'?1:0;
+  if(!extra)return [primary];
+  const range=profile(unit.kind).range;
+  const reachable=battle.units.filter(enemy=>enemy.side!==unit.side&&enemy!==primary&&deployed(enemy)&&
+    distance(actor.position,battle.runtime.actors[enemy.id].position)<=range);
+  const random=battle.runtime.effectRandom;
+  const guards=shuffle(reachable.filter(enemy=>hasGuardian(enemy.kind)),random);
+  const others=shuffle(reachable.filter(enemy=>!hasGuardian(enemy.kind)),random);
+  return [primary,...[...guards,...others].slice(0,extra)];
+}
+
 type CombatEffects = {
   motion:()=>void;
-  attack:(attacker:Unit,target:Unit,followUp?:true)=>void;
+  attack:(attacker:Unit,targets:Unit[],followUp?:true)=>void;
 };
 
 export function advanceCombatTick(battle:Battle,effects:CombatEffects){
@@ -105,14 +125,14 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
     }
     turnTowards(actor,target.actor);
     recover(actor,tick+profile(unit.kind).recover);
-    effects.attack(unit,target.unit);
+    effects.attack(unit,planAttackTargets(battle,fighter,target.unit));
     if(unit.kind==='orcRider'){
       const live=battle.units.filter(deployed).map(unit=>({unit,actor:clock.actors[unit.id]}));
       const followUp=chooseTarget(fighter,live,clock,enemy=>withinRange(fighter,enemy));
       if(followUp){
         actor.targetId=followUp.unit.id;
         turnTowards(actor,followUp.actor);
-        effects.attack(unit,followUp.unit,true);
+        effects.attack(unit,[followUp.unit],true);
       }
     }
   }

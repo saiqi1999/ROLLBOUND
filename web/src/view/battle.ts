@@ -1,5 +1,6 @@
 import {encounters,REQUIRED_WINS} from '../data.ts';
-import {earnedRemovalMarker,removalMarkers,type Run} from '../engine.ts';
+import {earnedRemovalMarker,type Run} from '../engine.ts';
+import {tagCount} from '../magic-tags.ts';
 import {deployed} from '../battle/unit-state.ts';
 import type {Battle} from '../battle/model.ts';
 import {scenery} from '../landscape.ts';
@@ -49,7 +50,7 @@ export function renderResult(root:HTMLElement,run:Run){
     '<div class="review"><button data-act="log">查看战报</button><label>从 <select id="review-window">'+run.history.map((frame,index)=>
       '<option value="'+index+'">'+seconds(frame)+'</option>').join('')+'</select> 回看</label><button data-act="replay">播放</button></div>':'';
   const reward=nextShop&&earnedRemovalMarker(run.stage,result)?
-    '<p class="removal-reward">获得 1 个移除标记 · 当前持有 '+removalMarkers(run)+' 个</p>':'';
+    '<p class="tag-reward">获得 1 枚移除标签 · 当前持有 '+tagCount(run.tagInventory,'remove')+' 枚</p>':'';
   const roster=[...new Set(run.roster.map(unit=>unit.kind))].map(kind=>art(kind)).join('');
   const score=run.results.map((value,index)=>'<div><small>'+encounters[index].name+'</small><b>'+value+'</b></div>').join('');
   root.innerHTML=header(run)+'<section class="results"><div class="kicker">第 '+(lastStage+1)+' 战 · '+encounters[lastStage].name+

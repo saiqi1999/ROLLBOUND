@@ -1,4 +1,5 @@
-import {advanceCombatTick,spawnActor} from './combat.ts';
+import {units} from '../data.ts';
+import {advanceCombatTick,deployUnit} from './combat.ts';
 import {createEffects} from './effects.ts';
 import {
   COMBAT,createCombat,DEATHS_PER_REINFORCEMENT,FIELD_LIMIT,
@@ -7,15 +8,33 @@ import {
 import {shuffle} from './random.ts';
 import {deployed,makeUnit} from './unit-state.ts';
 
-function deploy(battle:Battle,unit:Unit){
-  unit.field=true;
-  spawnActor(battle,unit);
+function deployClones(battle:Battle,originals:Unit[]){
+  const clones:Unit[]=[];
+  for(const original of originals){
+    if(original.tag!=='clone')continue;
+    const {tag,...stats}=original;
+    const clone:Unit={...stats,id:original.id+'-clone',temporary:true,cloneOf:original.id};
+    battle.units.push(clone);
+    deployUnit(battle,clone);
+    clones.push(clone);
+  }
+  return clones;
+}
+
+function recordClones(clones:Unit[],record:RecordMoment){
+  for(const clone of clones){
+    const label=(clone.side?'敌方':'我方')+units[clone.kind].name;
+    record('召唤',label+'召唤一个分身。',[clone.id],{
+      action:'empower',source:clone.cloneOf,value:'分身',valueTargets:[clone.id],
+    });
+  }
 }
 
 export function createBattle(plan:BattlePlan):Battle{
-  const allies=plan.allies.map(({id,kind,gainedAttack,gainedHealth,startingArmor})=>{
+  const allies=plan.allies.map(({id,kind,gainedAttack,gainedHealth,startingArmor,tag})=>{
     const unit=makeUnit(id,kind,0,gainedAttack,gainedHealth);
     unit.shield=startingArmor;
+    if(tag)unit.tag=tag;
     return unit;
   });
   const enemies=plan.enemies.map(({kind,attack,health},index)=>makeUnit('1-'+index,kind,1,attack,health));
@@ -27,9 +46,10 @@ export function createBattle(plan:BattlePlan):Battle{
   for(const side of [0,1] as const){
     const random={rng:(plan.seed^Math.imul(side+1,0x2ba9d777))>>>0};
     const order=shuffle(groups[side].slice(),random);
-    for(const unit of order.slice(0,FIELD_LIMIT))deploy(battle,unit);
+    for(const unit of order.slice(0,FIELD_LIMIT))deployUnit(battle,unit);
     battle.reserves[side]=order.slice(FIELD_LIMIT).map(unit=>unit.id);
   }
+  deployClones(battle,battle.units.filter(deployed));
   return battle;
 }
 
@@ -38,8 +58,11 @@ function deployReinforcements(battle:Battle,byId:Map<string,Unit>,record:RecordM
     const qualified=Math.floor(battle.recruitedDeaths[side]/DEATHS_PER_REINFORCEMENT);
     battle.recruitedDeaths[side]%=DEATHS_PER_REINFORCEMENT;
     const arriving=battle.reserves[side].splice(0,qualified);
-    for(const id of arriving)deploy(battle,byId.get(id)!);
-    if(arriving.length)record('补员',(side?'敌方':'我方')+'候补入场 '+arriving.length+' 名。',arriving);
+    if(!arriving.length)continue;
+    const originals=arriving.map(id=>byId.get(id)!);
+    for(const unit of originals)deployUnit(battle,unit);
+    record('补员',(side?'敌方':'我方')+'候补入场 '+arriving.length+' 名。',arriving);
+    recordClones(deployClones(battle,originals),record);
   }
 }
 
@@ -62,6 +85,7 @@ export function simulateBattleWindow(start:Battle,{
   const effects=createEffects(battle,record);
   if(!battle.openingResolved){
     battle.openingResolved=true;
+    recordClones(battle.units.filter(unit=>unit.cloneOf),record);
     for(const spell of battle.openingSpells){
       effects.fireball(spell.id);
       deployReinforcements(battle,byId,record);

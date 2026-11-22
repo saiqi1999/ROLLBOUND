@@ -2,17 +2,17 @@ import './style.css';
 import {COMBAT_TICK_MS} from './timing.ts';
 import {playbackFrames,type PlaybackFrame} from './playback.ts';
 import {encounters,spells,unitEffectText,units,WEREWOLF_RECRUIT_GAIN,type Kind,type SpellKind} from './data.ts';
-import {advance,commitBattleWindow,newRun,removeUnit,simulateBattleWindow,startBattle,type Run} from './engine.ts';
+import {advance,commitBattleWindow,newRun,simulateBattleWindow,startBattle,type Run} from './engine.ts';
 import {FIELD_LIMIT,type Battle,type BattleWindow} from './battle/model.ts';
+import {magicTags,tagCount,type AppliedTag,type TagId} from './magic-tags.ts';
 import {unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
+import {applyMagicTag} from './shop/tags.ts';
 import {loadRun,saveRun} from './save.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
-import {
-  changeShopPane,paintShopBoard,paintShopControls,paintSpinSummary,renderRemoval,renderShop,
-  slimeRemovalBenefit,type ShopPane,
-} from './view/shop.ts';
+import {changeShopPane,paintShopBoard,paintShopControls,paintSpinSummary,renderShop,type ShopPane} from './view/shop.ts';
+import {renderTags,slimeRemovalBenefit,tagDetails,type TagSelection} from './view/tags.ts';
 import {paintBattle,renderBattle,renderResult} from './view/battle.ts';
 import type * as Arena from './arena.ts';
 
@@ -22,7 +22,7 @@ const getSeed=()=>crypto.getRandomValues(new Uint32Array(1))[0];
 const loaded=loadRun();
 let run:Run=loaded??newRun(getSeed());
 let shopPane:ShopPane='wheel',spinController:AbortController|undefined;
-let removalOpen=false,removalSelection:string|undefined,removalNotice='';
+let tagsOpen=false,tagSelection:TagSelection={notice:''};
 let arena:typeof Arena|undefined,arenaReady=false,arenaToken=0;
 let timer=0,startedAt=0,remaining=0,paused=false,speed=1;
 let frames:PlaybackFrame[]=[],frameIndex=0,pending:BattleWindow|undefined,playbackStart:Battle|undefined;
@@ -48,8 +48,9 @@ dialog.addEventListener('close',()=>{
   resumeAfterDialog=false;
 });
 
-const ruleText='<p>七店七战，落败或平局结束远征。每间商店发放金币，余额结转。第 2、4、6 战获胜各得 1 个移除标记。</p>'+
-  '<p>货架每次提供三名单位和一张法术，刷新花费 1 金。每店摇盘依次花费 1、1、2、2、3、3 金，依此递增。</p>'+
+const ruleText='<p>七店七战，落败或平局结束远征。每间商店发放金币，余额结转。第 2、4、6 战获胜各得 1 枚移除标签。</p>'+
+  '<p>货架每次提供三名单位，第四格各有一半概率出法术或魔法标签。刷新花费 1 金。每店摇盘依次花费 1、1、2、2、3、3 金，依此递增。</p>'+
+  '<p>购买的标签可在「打标签」页使用。每枚棋子只能贴一枚标签，贴新的会覆盖原标签。位置标签在付费摇盘时生效。</p>'+
   '<p>进店与招募后，轮盘实时显示队伍。摇盘从队伍和未用法术中随机抽取并触发联动。横、竖、斜角均算相邻。'+
   '摇盘中获得的强化永久保留。召唤的单位立即寻找随机空格入盘，受变化影响的棋子会继续结算。</p>'+
   '<p>开战时全队参加随机抽取，最多 '+FIELD_LIMIT+' 名首发，其余候补。每有两名已部署的招募单位最终阵亡，补一名候补。'+
@@ -61,13 +62,17 @@ function showUnit(button:HTMLButtonElement,kind:Kind){
     health:Number(button.dataset.health)||units[kind].hp};
   const text=unitEffectText(kind,{spellCasts:run.spellCasts,evolutionTriggers:unit?.evolutionTriggers});
   modal(units[kind].name,art(kind)+unitTags(kind)+'<p>攻击 '+stats.attack+'　生命 '+stats.health+'</p>'+
-    '<p>'+text+'</p>'+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':''));
+    '<p>'+text+'</p>'+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':'')+
+    (unit?.tag?'<h3>'+magicTags[unit.tag].name+'标签</h3>'+tagDetails(unit.tag):''));
 }
 
 document.addEventListener('unit-info',((event:CustomEvent)=>{
-  const unit=event.detail as {kind:Kind;name:string;hp:number;maxHp:number;atk:number;shield:number;temporary?:true};
-  modal(unit.name,art(unit.kind)+unitTags(unit.kind,unit.temporary)+'<p>攻击 '+unit.atk+'　生命 '+unit.hp+'/'+unit.maxHp+
-    '　护甲 '+unit.shield+'</p><p>'+unitEffectText(unit.kind)+'</p>');
+  const unit=event.detail as {
+    kind:Kind;hp:number;maxHp:number;atk:number;shield:number;temporary?:true;tag?:AppliedTag;cloneOf?:string;
+  };
+  modal(units[unit.kind].name+(unit.cloneOf?'（分身）':''),art(unit.kind)+unitTags(unit.kind,unit.temporary)+
+    '<p>攻击 '+unit.atk+'　生命 '+unit.hp+'/'+unit.maxHp+'　护甲 '+unit.shield+'</p>'+
+    '<p>'+unitEffectText(unit.kind)+'</p>'+(unit.tag?'<h3>'+magicTags[unit.tag].name+'标签</h3>'+tagDetails(unit.tag):''));
 }) as EventListener);
 
 async function spinShop(){
@@ -230,11 +235,19 @@ function mountBattle(){
 
 function render(){
   if(run.phase==='shop'){
-    if(removalOpen)renderRemoval(app,run,removalSelection,removalNotice);
+    if(tagsOpen)renderTags(app,run,tagSelection);
     else renderShop(app,run,shopPane);
   }else if(run.phase==='battle'){
     mountBattle();
   }else renderResult(app,run);
+}
+
+function refreshTagPage(focus:string){
+  const scroll=app.querySelector('.tag-choices')?.scrollLeft??0;
+  render();
+  const choices=app.querySelector('.tag-choices');
+  if(choices)choices.scrollLeft=scroll;
+  app.querySelector<HTMLElement>(focus)?.focus({preventScroll:true});
 }
 
 app.addEventListener('click',event=>{
@@ -259,6 +272,11 @@ app.addEventListener('click',event=>{
     modal(spells[kind].name,spellArt(kind)+'<p>'+spells[kind].text+'</p><p>在商店摇出时消耗。</p>');
     return;
   }
+  if(button.dataset.tagInfo){
+    const tag=button.dataset.tagInfo as TagId;
+    modal(magicTags[tag].name+'标签',tagDetails(tag)+'<p>购买后，在「打标签」页使用。</p>');
+    return;
+  }
   if(button.dataset.buyIndex!==undefined){
     const index=Number(button.dataset.buyIndex);
     const priorCount=run.roster.length;
@@ -266,15 +284,17 @@ app.addEventListener('click',event=>{
     const offer=run.shop.offers[index];
     const keepFocus=document.activeElement===button;
     save();
-    if(!offer.spell)paintShopBoard(app,run);
+    if(offer.type==='unit')paintShopBoard(app,run);
     paintShopControls(app,run);
     if(keepFocus)button.closest('.offer')?.querySelector<HTMLElement>('.offer-art')?.focus({preventScroll:true});
-    const extra=offer.kinds[0]==='king'?'与 2 名骷髅兵':offer.kinds[0]==='bat'?'，获得'+spells[run.spells.at(-1)!.kind].name:'';
-    const growingWolves=offer.spell?0:run.roster.slice(0,priorCount).filter(unit=>unit.kind==='werewolf').length;
+    const kind=offer.type==='unit'?offer.kinds[0]:undefined;
+    const extra=kind==='king'?'与 2 名骷髅兵':kind==='bat'?'，获得'+spells[run.spells.at(-1)!.kind].name:'';
+    const growingWolves=kind?run.roster.slice(0,priorCount).filter(unit=>unit.kind==='werewolf').length:0;
     const growth=growingWolves?growingWolves+' 名狼人永久 +'+WEREWOLF_RECRUIT_GAIN+'/+'+WEREWOLF_RECRUIT_GAIN:'';
-    const status=(offer.spell?'已购买 ':'已招募 ')+offer.title+extra+(growth?'，'+growth:'')+'，剩余 '+run.gold+' 金。';
+    const status=(kind?'已招募 ':'已购买 ')+offer.title+(offer.type==='tag'?'标签':'')+extra+
+      (growth?'，'+growth:'')+'，剩余 '+run.gold+' 金。';
     app.querySelector('#purchase-status')!.textContent=status;
-    if(!offer.spell){
+    if(kind){
       const added=new Set(run.roster.slice(priorCount).map(unit=>unit.id));
       const onWheel=run.shop.board.filter(slot=>slot&&added.has(slot.id)).length;
       const placement=onWheel===added.size?'已上盘':onWheel===0?'轮盘已满':
@@ -283,11 +303,14 @@ app.addEventListener('click',event=>{
     }
     return;
   }
-  if(button.dataset.removeId&&removalOpen){
-    removalSelection=button.dataset.removeId;
-    removalNotice='';
-    render();
-    app.querySelector<HTMLElement>('.removal-unit[aria-pressed="true"]')?.focus();
+  if(button.dataset.selectTag&&tagsOpen){
+    tagSelection={...tagSelection,tag:button.dataset.selectTag as TagId,notice:''};
+    refreshTagPage('.tag-choice[aria-pressed="true"]');
+    return;
+  }
+  if(button.dataset.tagTarget&&tagsOpen){
+    tagSelection={...tagSelection,unitId:button.dataset.tagTarget,notice:''};
+    refreshTagPage('.tag-unit[aria-pressed="true"]');
     return;
   }
 
@@ -302,22 +325,29 @@ app.addEventListener('click',event=>{
         if(keepFocus)app.querySelector<HTMLElement>('[data-act="refresh"]:enabled,.offer-art')?.focus({preventScroll:true});
       }
       break;
-    case 'manage-removal':
-      removalOpen=true;render();
+    case 'manage-tags':
+      tagsOpen=true;render();
       app.querySelector<HTMLElement>('[data-act="back-shop"]')?.focus();
       break;
     case 'back-shop':
-      removalOpen=false;removalSelection=undefined;removalNotice='';render();
-      app.querySelector<HTMLElement>('[data-act="manage-removal"]')?.focus();
+      tagsOpen=false;tagSelection={notice:''};render();
+      app.querySelector<HTMLElement>('[data-act="manage-tags"]')?.focus();
       break;
-    case 'confirm-removal':{
-      const selected=run.roster.find(unit=>unit.id===removalSelection);
-      if(!removalOpen||!selected||!removeUnit(run,selected.id))break;
-      removalSelection=undefined;
-      removalNotice='已移除 '+units[selected.kind].name+'。'+
-        (selected.kind==='slime'&&run.roster.length?slimeRemovalBenefit:'');
-      save();render();
-      (app.querySelector<HTMLElement>('.removal-unit:enabled')??app.querySelector<HTMLElement>('[data-act="back-shop"]'))?.focus();
+    case 'apply-tag':{
+      const {tag,unitId}=tagSelection;
+      const selected=run.roster.find(unit=>unit.id===unitId);
+      if(!tagsOpen||!tag||!selected)break;
+      const result=applyMagicTag(run,selected.id,tag);
+      if(!result.ok)break;
+      const name=units[selected.kind].name;
+      tagSelection={
+        tag:tagCount(run.tagInventory,tag)>0?tag:undefined,
+        unitId:result.removed?undefined:unitId,
+        notice:result.removed?'已移除 '+name+'。'+(selected.kind==='slime'&&run.roster.length?slimeRemovalBenefit:''):
+          name+'已贴上'+magicTags[tag].name+'标签。'+(result.previous?'原有'+magicTags[result.previous].name+'标签已覆盖。':''),
+      };
+      save();
+      refreshTagPage(result.removed?'.tag-unit, .tags-heading button':'.tag-unit[aria-pressed="true"]');
       break;
     }
     case 'fight':if(startBattle(run)){paused=false;save();render();}break;

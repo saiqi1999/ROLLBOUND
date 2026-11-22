@@ -1,8 +1,10 @@
-import {encounters,SLIME_REMOVAL_GAIN} from './data.ts';
+import {encounters} from './data.ts';
 import {createBattle} from './battle/resolve.ts';
 import type {Battle,BattleWindow,Outcome} from './battle/model.ts';
-import {grantGrowth,type ShopState,type SpellInstance,type UnitInstance} from './shop/model.ts';
-import {createShop,detachShopUnit,resolveEvolutions} from './shop/rules.ts';
+import type {ShopState,SpellInstance,UnitInstance} from './shop/model.ts';
+import {createShop} from './shop/rules.ts';
+import {applyShopEndTags} from './shop/tags.ts';
+import {addTag,type TagInventory} from './magic-tags.ts';
 import {COMBAT_TICK_MS} from './timing.ts';
 
 export type {Battle,Moment,Outcome,Unit} from './battle/model.ts';
@@ -10,16 +12,16 @@ export {currentAttack,maxHealth} from './battle/unit-state.ts';
 export {simulateBattleWindow} from './battle/resolve.ts';
 
 export type Run = {
-  version:5;seed:number;stage:number;gold:number;nextId:number;
-  roster:UnitInstance[];pendingRecruits:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;removalsUsed:number;
+  version:6;seed:number;stage:number;gold:number;nextId:number;
+  roster:UnitInstance[];pendingRecruits:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;tagInventory:TagInventory;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
   results:Outcome[];log:string[];history:Battle[];
 };
 
 export function newRun(seed:number):Run{
   return {
-    version:5,seed,stage:0,gold:encounters[0].gold,nextId:0,roster:[],pendingRecruits:[],spells:[],spellCasts:0,
-    shop:createShop(seed,0),removalsUsed:0,phase:'shop',battle:null,results:[],log:[],history:[],
+    version:6,seed,stage:0,gold:encounters[0].gold,nextId:0,roster:[],pendingRecruits:[],spells:[],spellCasts:0,
+    shop:createShop(seed,0),tagInventory:{},phase:'shop',battle:null,results:[],log:[],history:[],
   };
 }
 
@@ -31,29 +33,9 @@ export function earnedRemovalMarker(stage:number,result:Outcome|undefined){
   return (stage+1)%2===0&&result==='胜利';
 }
 
-export function removalMarkers(run:Run){
-  const earned=run.results.filter((result,stage)=>earnedRemovalMarker(stage,result)).length;
-  return Math.max(0,earned-run.removalsUsed);
-}
-
-export function removeUnit(run:Run,id:string){
-  if(run.phase!=='shop'||!removalMarkers(run))return false;
-  const removed=detachShopUnit(run,id);
-  if(!removed)return false;
-  const slot=run.shop.board.findIndex(symbol=>symbol?.id===id);
-  if(slot>=0)run.shop.board[slot]=null;
-  run.removalsUsed++;
-  if(removed.kind==='slime'){
-    for(const unit of run.roster){
-      grantGrowth(unit,{attack:SLIME_REMOVAL_GAIN,health:SLIME_REMOVAL_GAIN});
-    }
-    resolveEvolutions(run);
-  }
-  return true;
-}
-
 export function startBattle(run:Run){
   if(!canStartBattle(run))return false;
+  applyShopEndTags(run);
   const encounter=encounters[run.stage];
   const seed=(run.seed^Math.imul(run.stage+1,2654435761))>>>0;
   run.battle=createBattle({
@@ -88,6 +70,7 @@ function finishBattle(run:Run,battle:Battle,outcome:Outcome){
     unit.gainedHealth=result.healthBonus;
   }
   run.results.push(outcome);
+  if(earnedRemovalMarker(run.stage,outcome))addTag(run.tagInventory,'remove');
   run.phase=outcome==='胜利'?'result':'end';
 }
 

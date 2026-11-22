@@ -30,7 +30,9 @@ export function frameMessage(frame:PlaybackFrame|undefined){
   const attacks=moments.filter(moment=>moment.action==='attack');
   const followUp=attacks.find(moment=>moment.followUp);
   if(followUp)return {phase:'连击',text:followUp.text};
-  if(attacks.length>1)return {phase:'攻击',text:attacks.length+' 名单位出手。'};
+  const attackers=new Set(attacks.map(moment=>moment.source));
+  if(attackers.size>1)return {phase:'攻击',text:attackers.size+' 名单位出手。'};
+  if(attacks.length>1)return {phase:'攻击',text:attacks[0].text+' 同时命中 '+attacks.length+' 名敌人。'};
   const moment=attacks[0]??moments.find(moment=>moment.phase!=='移动')??moments[0];
   if(!moment)return frame?{phase:'战斗',text:'单位继续行动。'}:{phase:'备战',text:'双方列阵。'};
   return {phase:moment.phase,text:moment.text};
@@ -44,6 +46,7 @@ export type ActorFeedback = {
   marked?:true;
   damage:number;
   shield:number;
+  healing:number;
   values:string[];
   effects:Set<ActorEffect>;
 };
@@ -53,7 +56,7 @@ export function actorFeedback(moments:Moment[]){
   const feedback=(id:string)=>{
     const existing=actors.get(id);
     if(existing)return existing;
-    const cue:ActorFeedback={damage:0,shield:0,values:[],effects:new Set()};
+    const cue:ActorFeedback={damage:0,shield:0,healing:0,values:[],effects:new Set()};
     actors.set(id,cue);
     return cue;
   };
@@ -63,6 +66,7 @@ export function actorFeedback(moments:Moment[]){
       const attacker=feedback(source),victim=feedback(target);
       attacker.attack=true;
       attacker.shield+=moment.shieldGain??0;
+      attacker.healing+=moment.healing??0;
       if(moment.followUp)attacker.values.push('连击');
       victim.hit=true;
       victim.damage+=moment.damage??0;

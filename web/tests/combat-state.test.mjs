@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {advance,commitBattleWindow,newRun,removalMarkers,simulateBattleWindow,startBattle} from '../src/engine.ts';
+import {advance,commitBattleWindow,newRun,simulateBattleWindow,startBattle} from '../src/engine.ts';
+import {tagCount} from '../src/magic-tags.ts';
 import {createBattle} from '../src/battle/resolve.ts';
 import {createEffects} from '../src/battle/effects.ts';
 import {COMBAT,FIELD_LIMIT,profile} from '../src/battle/model.ts';
@@ -76,9 +77,9 @@ test('a temporary skeleton dying does not pay for a reserve or enter the permane
   const enemy=live(battle,1)[0];
   enemy.bonus=99;
   const effects=createEffects(battle,()=>{});
-  effects.attack(enemy,live(battle,0)[0]);
+  effects.attack(enemy,[live(battle,0)[0]]);
   const skeleton=live(battle,0).find(unit=>unit.temporary);
-  effects.attack(enemy,skeleton);
+  effects.attack(enemy,[skeleton]);
   const result=simulateBattleWindow(battle,{tickLimit:1});
   assert.equal(result.next.recruitedDeaths[0],1);
   assert.equal(result.next.reserves[0].length,2);
@@ -124,7 +125,7 @@ test('a werebear gains armour equal to its current attack even on a fully blocke
   bear.bonus=4;
   target.shield=10;
   const events=[];
-  createEffects(battle,(phase,text,focus,detail)=>events.push({phase,text,focus,...detail})).attack(bear,target);
+  createEffects(battle,(phase,text,focus,detail)=>events.push({phase,text,focus,...detail})).attack(bear,[target]);
   assert.equal(bear.shield,7);
   assert.equal(target.hp,12);
   assert.equal(target.shield,3);
@@ -238,6 +239,104 @@ test('rider extra attacks find a live enemy and use the earlier permanent kill g
   assert.equal(run.roster[0].gainedAttack,run.roster[0].gainedHealth);
 });
 
+test('one triple strike prioritizes reachable guardians and uses a shared damage snapshot before the rider follow-up',()=>{
+  const {battle}=scenario([['orcRider',450,310]],[
+    ['page',550,310],['templar',450,210],['guard',620,410],['page',355,310],['axeman',800,310],
+  ]);
+  const rider=battle.units[0];
+  rider.tag='triple';
+  battle.units[2].hp=3;
+  charge(battle,rider.id,'1-0');
+  const window=simulateBattleWindow(battle,{tickLimit:1});
+  const attacks=window.events.filter(event=>event.action==='attack');
+  const [primary,extra,...rest]=attacks;
+  assert.deepEqual([primary.target,extra.target,rest[0].target],['1-0','1-1','1-3']);
+  assert.ok(attacks.slice(0,3).every(hit=>hit.attackId===primary.attackId&&hit.damage===3));
+  assert.equal(window.next.units[0].bonus,3);
+  assert.equal(actorFeedback(window.events).get(rider.id).attack,true);
+  assert.equal(attacks.filter(hit=>hit.followUp).length,0);
+});
+
+test('triple rider hits use one snapshot, followed by an independent single strike with kill growth',()=>{
+  const {battle}=scenario([['orcRider',450,310]],[
+    ['page',550,310],['guard',450,210],['orc',450,410],
+  ]);
+  battle.units[0].tag='triple';
+  charge(battle,'0-0','1-0');
+  const window=simulateBattleWindow(battle,{tickLimit:1});
+  const attacks=window.events.filter(event=>event.action==='attack');
+  assert.equal(new Set(attacks.slice(0,3).map(event=>event.target)).size,3);
+  assert.equal(new Set(attacks.slice(0,3).map(event=>event.attackId)).size,1);
+  assert.deepEqual(attacks.map(event=>event.damage),[3,3,3,4]);
+  assert.equal(attacks.at(-1).followUp,true);
+  assert.notEqual(attacks.at(-1).target,'1-0');
+  assert.notEqual(attacks.at(-1).attackId,attacks[0].attackId);
+});
+
+test('shield and lifesteal use full damage after armor and overkill, with healing capped at max health',()=>{
+  for(const [tag,hp,shield,healing] of [['shield',5,40,0],['lifesteal',5,0,40],['lifesteal',92,0,8]]){
+    const {battle}=scenario([['werewolf',450,310]],[['werebear',550,310]]);
+    const [attacker,target]=battle.units;
+    Object.assign(attacker,{tag,hp,healthBonus:92,bonus:37});
+    Object.assign(target,{hp:14,shield:10});
+    charge(battle,attacker.id,target.id);
+    const window=simulateBattleWindow(battle,{tickLimit:1});
+    const hit=window.events.find(event=>event.action==='attack');
+    assert.deepEqual([hit.damage,hit.shieldLost,hit.healthLost,hit.shieldGain,hit.healing],[40,10,14,shield,healing]);
+    assert.deepEqual([window.next.units[0].hp,window.next.units[0].shield],[hp+healing,shield]);
+    assert.equal(actorFeedback(window.events).get(attacker.id).healing,healing);
+  }
+});
+
+test('clones deploy after the originals, retain their birth stats and do not contribute to reserve deaths',()=>{
+  const run=newRun(87);
+  for(let index=0;index<17;index++)recruit(run,'werewolf',3,4);
+  const plan={
+    id:'clones',seed:87,allies:run.roster,enemies:[{kind:'orc',attack:50,health:50}],openingSpells:[],
+  };
+  const initial=createBattle(plan);
+  const reserve=initial.reserves[0][0],first=initial.units.filter(unit=>unit.side===0&&unit.field).slice(0,2);
+  const taggedIds=[...first.map(unit=>unit.id),reserve];
+  for(const unit of run.roster.filter(unit=>taggedIds.includes(unit.id))){
+    unit.tag='clone';
+    unit.startingArmor=2;
+  }
+  const battle=createBattle(plan);
+  const clones=battle.units.filter(unit=>unit.cloneOf);
+  assert.equal(live(battle,0).length,FIELD_LIMIT+2);
+  assert.equal(clones.length,2);
+  assert.ok(clones.every(clone=>clone.temporary&&!clone.tag&&clone.shield===2&&currentAttack(clone)===6&&clone.hp===12));
+  assert.ok(!clones.some(clone=>clone.cloneOf===reserve));
+
+  const guard=battle.units.find(unit=>unit.side===1);
+  const effects=createEffects(battle,()=>{});
+  effects.attack(guard,[clones[0]]);
+  assert.equal(battle.recruitedDeaths[0],0);
+  effects.attack(guard,first.map(unit=>battle.units.find(part=>part.id===unit.id)));
+  const result=simulateBattleWindow(battle,{tickLimit:1});
+  assert.equal(result.next.reserves[0].length,0);
+  assert.equal(result.next.units.filter(unit=>unit.cloneOf===reserve).length,1);
+  assert.ok(result.events.some(event=>event.phase==='召唤'&&event.source===reserve));
+  const replay=simulateBattleWindow(battle,{tickLimit:1,captureEvents:false});
+  assert.deepEqual(replay.next,result.next);
+});
+
+test('a team-tagged death applies max-health growth before the unit summons its temporary allies',()=>{
+  const {battle}=scenario([['armoredSkeleton'],['werewolf']],[['orc']]);
+  const [tagged,ally,enemy]=battle.units;
+  Object.assign(tagged,{tag:'team',hp:1,healthBonus:30,battleHealthBonus:5,shield:1});
+  ally.hp=4;
+  const events=[];
+  const effects=createEffects(battle,(phase,text,focus,detail)=>events.push({phase,text,focus,...detail}));
+  effects.attack(enemy,[tagged]);
+  assert.equal(currentAttack(ally),7);
+  assert.equal(maxHealth(ally),12);
+  assert.equal(ally.hp,8);
+  assert.equal(ally.bonus,0);
+  assert.deepEqual(battle.units.filter(unit=>unit.temporary).map(currentAttack),[1,1,1]);
+  assert.ok(events.findIndex(event=>event.value==='+4/+4')<events.findIndex(event=>event.phase==='召唤'));
+});
+
 test('simultaneous strikes and movement share one fixed playback beat',()=>{
   const {battle}=scenario([
     ['archer',385,210],['archer',400,280],['guard',255,529],
@@ -261,8 +360,8 @@ test('undead archers stack combat attack on each final friendly undead death',()
   const {battle}=scenario([['bone',395,210],['page',430,310],['page',430,385]],[['orc',520,310]]);
   const enemy=battle.units.at(-1);
   const effects=createEffects(battle,()=>{});
-  effects.attack(enemy,battle.units[1]);
-  effects.attack(enemy,battle.units[2]);
+  effects.attack(enemy,[battle.units[1]]);
+  effects.attack(enemy,[battle.units[2]]);
   assert.equal(currentAttack(battle.units[0]),8);
   assert.equal(battle.units.length,4);
 });
@@ -285,5 +384,5 @@ test('the adventure can progress seven times with one grant per shop and three e
     }
   }
   assert.equal(run.phase,'end');
-  assert.equal(removalMarkers(run),3);
+  assert.equal(tagCount(run.tagInventory,'remove'),3);
 });

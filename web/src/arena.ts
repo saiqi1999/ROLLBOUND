@@ -3,7 +3,7 @@ import {ATTACK_MS,COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
 import {actorFeedback,type ActorFeedback,type ActorEffect,type PlaybackFrame} from './playback.ts';
 import {COMBAT,type Point} from './battle/model.ts';
 import {clearHitFlash,flashHit} from './hit-flash.ts';
-import {units,hasGuardian,type Kind} from './data.ts';
+import {units,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
@@ -106,9 +106,9 @@ class Stage extends Phaser.Scene {
       this.moveActor(view,x,y,animate&&!snap);
       sprite.setScale(scale).setFlipX(actor.facing===-1);
       ground.setSize(23*scale,5*scale);
-      const guarding=unit.hp>0&&hasGuardian(unit.kind),marked=cue?.marked&&!cue.death;
-      const color=marked?0xf0cf89:guarding?0xadd5ef:unit.side?0xb48283:0x86b69b;
-      ground.setStrokeStyle(marked||guarding?2:1,color,marked||guarding?1:.45);
+      const marked=cue?.marked&&!cue.death;
+      const color=marked?0xf0cf89:unit.side?0xb48283:0x86b69b;
+      ground.setStrokeStyle(marked?2:1,color,marked?1:.45);
       const attack=currentAttack(unit),statsKey=[unit.hp,maxHealth(unit),attack,unit.shield,scale].join('/');
       if(view.statsKey!==statsKey){
         view.stats?.destroy();
@@ -166,9 +166,10 @@ class Stage extends Phaser.Scene {
     for(const effect of cue.effects)this.playEffect(effect,0,3,scale,animate,root);
     const values=cue.damage?['−'+cue.damage,...cue.values]:[...cue.values];
     if(cue.shield)values.push('+'+cue.shield+' 盾');
+    if(cue.healing)values.push('+'+cue.healing+' 血');
     values.forEach((value,index)=>{
       const text=this.add.text(0,-18*scale-14*index,value,{
-        fontFamily:'sans-serif',fontSize:'13px',color:value.endsWith('盾')?'#acd5f0':'#fff4bd',
+        fontFamily:'sans-serif',fontSize:'13px',color:value.endsWith('盾')?'#acd5f0':value.endsWith('血')?'#b5ecae':'#fff4bd',
         stroke:'#262b26',strokeThickness:3,
       }).setOrigin(.5);
       root.add(text);
@@ -211,7 +212,10 @@ class Stage extends Phaser.Scene {
     sprite.setInteractive().on('pointerdown',()=>{
       const current=view.unit;
       document.dispatchEvent(new CustomEvent('unit-info',{
-        detail:{kind:current.kind,name:units[current.kind].name,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield,temporary:current.temporary},
+        detail:{
+          kind:current.kind,hp:current.hp,maxHp:maxHealth(current),atk:currentAttack(current),shield:current.shield,
+          temporary:current.temporary,tag:current.tag,cloneOf:current.cloneOf,
+        },
       }));
     });
     sprite.on(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>{

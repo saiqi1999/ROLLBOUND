@@ -1,10 +1,20 @@
 import {ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GUARD_SHIELD,HUMAN_ARMOR,TEMPLAR_DEATH_GAIN,units} from '../data.ts';
-import {interruptActor,spawnActor} from './combat.ts';
+import {teamTagGain} from '../magic-tags.ts';
+import {deployUnit,interruptActor} from './combat.ts';
 import type {Battle,RecordMoment,Unit} from './model.ts';
 import {pick} from './random.ts';
-import {currentAttack,deployed,grantBattleStats,grantPermanentStats,makeUnit} from './unit-state.ts';
+import {currentAttack,deployed,grantBattleStats,grantPermanentStats,makeUnit,maxHealth} from './unit-state.ts';
 
 const label=(unit:Unit)=>(unit.side?'敌方':'我方')+units[unit.kind].name;
+
+function applyDamage(target:Unit,damage:number){
+  const rawDamage=Math.max(0,damage);
+  const shieldLost=Math.min(target.shield,rawDamage);
+  const healthLost=Math.min(target.hp,rawDamage-shieldLost);
+  target.shield-=shieldLost;
+  target.hp-=healthLost;
+  return {rawDamage,shieldLost,healthLost,lethal:target.hp<=0};
+}
 
 export function createEffects(battle:Battle,record:RecordMoment){
   const humanAllies=(source:Unit)=>battle.units.filter(other=>
@@ -26,9 +36,8 @@ export function createEffects(battle:Battle,record:RecordMoment){
       const id=source.side+'-'+battle.units.length+'-temporary';
       const skeleton=makeUnit(id,'page',source.side);
       skeleton.temporary=true;
-      skeleton.field=true;
       battle.units.push(skeleton);
-      spawnActor(battle,skeleton);
+      deployUnit(battle,skeleton);
       summoned.push(id);
     }
     record('召唤',label(source)+'招来 '+summoned.length+' 名临时骷髅兵。',summoned,{source:source.id});
@@ -39,6 +48,15 @@ export function createEffects(battle:Battle,record:RecordMoment){
     interruptActor(battle,unit);
     if(!unit.temporary)battle.recruitedDeaths[unit.side]++;
     record('阵亡',label(unit)+'阵亡。',[unit.id],{action:'death'});
+    if(unit.tag==='team'){
+      const amount=teamTagGain(maxHealth(unit));
+      if(amount){
+        const allies=battle.units.filter(other=>other.side===unit.side&&deployed(other));
+        for(const ally of allies)grantBattleStats(ally,amount,amount);
+        const gain='+'+amount+'/+'+amount;
+        buff('阵亡',unit,allies,'的团队标签使其他在场友方本场 '+gain+'。',gain,'empower');
+      }
+    }
     if(unit.kind==='axeman'){
       const allies=humanAllies(unit);
       for(const ally of allies)ally.shield+=HUMAN_ARMOR;
@@ -73,21 +91,32 @@ export function createEffects(battle:Battle,record:RecordMoment){
     resolveLethalHit(target);
   }
 
-  function attack(unit:Unit,target:Unit,followUp?:true){
+  function attack(unit:Unit,targets:Unit[],followUp?:true){
     const damage=currentAttack(unit);
-    const shieldGain=unit.kind==='werebear'?damage:unit.kind==='guard'?GUARD_SHIELD:0;
-    unit.shield+=shieldGain;
-    const absorbed=Math.min(target.shield,damage);
-    target.shield-=absorbed;
-    target.hp=Math.max(0,target.hp-damage+absorbed);
-    record('攻击',label(unit)+(followUp?'连击':'攻击')+units[target.kind].name+'，造成 '+damage+' 点伤害。',[
-      unit.id,target.id,
-    ],{action:'attack',source:unit.id,target:target.id,damage,shieldGain,followUp});
-    if(target.hp>0)return;
-    resolveLethalHit(target);
-    if(unit.kind==='orcRider'){
-      grantPermanentStats(unit,1,1);
-      buff('攻击',unit,[unit],'击杀敌人，永久 +1/+1。','+1/+1','empower');
+    const nativeShield=unit.kind==='werebear'?damage:unit.kind==='guard'?GUARD_SHIELD:0;
+    const attackId=unit.id+':'+battle.runtime.tick+(followUp?':follow-up':'');
+    for(const [index,target] of targets.entries()){
+      if(!deployed(target))continue;
+      const {rawDamage,shieldLost,healthLost,lethal}=applyDamage(target,damage);
+      const tagShield=unit.tag==='shield'?rawDamage:0;
+      const healing=unit.tag==='lifesteal'?Math.min(rawDamage,maxHealth(unit)-unit.hp):0;
+      const shieldGain=(index===0?nativeShield:0)+tagShield;
+      unit.shield+=shieldGain;
+      unit.hp+=healing;
+      let text=label(unit)+(followUp?'连击':'攻击')+units[target.kind].name+'，造成 '+rawDamage+' 点伤害';
+      if(healthLost!==rawDamage)text+='，扣甲 '+shieldLost+'、扣血 '+healthLost;
+      if(healing)text+='，吸血 +'+healing;
+      if(tagShield)text+='，护盾 +'+shieldGain;
+      record('攻击',text+'。',[unit.id,target.id],{
+        action:'attack',source:unit.id,target:target.id,attackId,damage:rawDamage,shieldLost,healthLost,shieldGain,healing,followUp,
+      });
+      if(!lethal)continue;
+      resolveLethalHit(target);
+      if(unit.kind==='orcRider'){
+        if(unit.temporary)grantBattleStats(unit,1,1);
+        else grantPermanentStats(unit,1,1);
+        buff('攻击',unit,[unit],'击杀敌人，'+(unit.temporary?'本场':'永久')+' +1/+1。','+1/+1','empower');
+      }
     }
   }
 

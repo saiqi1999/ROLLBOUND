@@ -1,7 +1,8 @@
 import {hasGuardian,spells,units,type Kind} from '../data.ts';
+import {magicTags} from '../magic-tags.ts';
 import type {ShopEvent,ShopFrame,ShopSlot,ShopSpinResult,WheelStats} from '../shop/model.ts';
 import {WHEEL_WIDTH} from '../shop/wheel.ts';
-import {art,heart,spellArt} from './common.ts';
+import {art,heart,spellArt,tagBadge} from './common.ts';
 
 const stopTimes=[600,710,820,930];
 const columns=Array.from({length:WHEEL_WIDTH},(_,column)=>
@@ -10,7 +11,7 @@ const empowerSheet=new Image();
 empowerSheet.src=import.meta.env.BASE_URL+'art/fx-empower.png';
 
 const unitLabel=(kind:Kind,stats:WheelStats)=>units[kind].name+'，攻击 '+stats.attack+'，生命 '+stats.health+
-  (hasGuardian(kind)?'，守护':'');
+  (hasGuardian(kind)?'，守护':'')+(stats.tag?'，'+magicTags[stats.tag].name+'标签':'');
 
 function statNumbers(kind:Kind,stats:WheelStats){
   const unit=units[kind];
@@ -22,7 +23,7 @@ function symbol(slot:ShopSlot,stats:ShopFrame['stats'],interactive:boolean){
   if(!slot)return '<span class="cell empty" aria-label="空格"></span>';
   const unit=slot.type==='unit'?units[slot.kind]:undefined;
   const values=unit?(stats[slot.id]??{attack:unit.atk,health:unit.hp}):undefined;
-  const content=slot.type==='unit'?art(slot.kind)+(hasGuardian(slot.kind)?'<span class="wheel-guardian" aria-hidden="true"></span>':'')+
+  const content=slot.type==='unit'?art(slot.kind)+(values?.tag?tagBadge(values.tag):'')+
     '<span class="wheel-stats" aria-hidden="true">'+
     statNumbers(slot.kind,values!)+'</span>':spellArt(slot.kind);
   if(!interactive)return '<span class="cell '+slot.type+'">'+content+'</span>';

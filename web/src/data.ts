@@ -1,3 +1,5 @@
+import {magicTags,type TagId} from './magic-tags.ts';
+
 export const races = {human:'人类', orc:'兽人', undead:'亡灵', monster:'怪物'} as const;
 type Race = keyof typeof races;
 type UnitEffectContext = {spellCasts?:number;evolutionTriggers?:number};
@@ -74,9 +76,16 @@ export const spells = {
 } as const;
 export type SpellKind = keyof typeof spells;
 export const spellKinds=Object.keys(spells) as SpellKind[];
-export type Offer = { title:string; kinds:Kind[]; price:number; sold:boolean; spell?:SpellKind };
+type OfferBase = {title:string;price:number;sold:boolean};
+type UnitOffer = OfferBase&{type:'unit';kinds:[Kind,...Kind[]]};
+export type Offer = UnitOffer
+  | OfferBase&{type:'spell';spell:SpellKind}
+  | OfferBase&{type:'tag';tag:TagId};
 export function spellOffer(spell:SpellKind):Offer{
-  return {title:spells[spell].name,kinds:[],price:spells[spell].price,sold:false,spell};
+  return {type:'spell',title:spells[spell].name,price:spells[spell].price,sold:false,spell};
+}
+export function tagOffer(tag:TagId):Offer{
+  return {type:'tag',title:magicTags[tag].name,price:magicTags[tag].price,sold:false,tag};
 }
 export const encounters: {name:string; camp:string; units:Kind[]; health:number; attack:number; gold:number}[] = [
   {
@@ -113,8 +122,8 @@ export const encounters: {name:string; camp:string; units:Kind[]; health:number;
 ];
 export const REFRESH_COST = 1;
 export const REQUIRED_WINS = encounters.length;
-export function unitOffer(kind:Kind):Offer {
-  const kinds:Kind[]=[kind];
+export function unitOffer(kind:Kind):UnitOffer {
+  const kinds:[Kind,...Kind[]]=[kind];
   if(kind==='king')kinds.push('page','page');
-  return {kinds,price:unitPrices[kind],title:units[kind].name,sold:false};
+  return {type:'unit',kinds,price:unitPrices[kind],title:units[kind].name,sold:false};
 }

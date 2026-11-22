@@ -44,20 +44,49 @@
   header nav .now b::after { content: " / " attr(data-total); }
 }
 
-.removal-shop { max-width: 880px; margin: 28px auto; }
-.removal-heading, .removal-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.removal-heading h1 { margin: 0; }
-.removal-heading p, .removal-action p { color: var(--muted); }
-.removal-balance { color: var(--gold); margin: 18px 0; }
-.removal-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(155px, 100%), 1fr)); gap: 8px; }
-.removal-unit { display: flex; align-items: center; gap: 8px; min-height: 68px; padding: 8px; text-align: left; }
-.removal-unit .sprite { width: 48px; height: 48px; object-fit: contain; }
-.removal-unit span > * { display: block; }
-.removal-unit[aria-pressed="true"] { border-color: var(--gold); background: #514835; }
-.removal-action { margin-top: 16px; }
+.tags-shop { max-width: 1060px; margin: 28px auto; }
+.tags-heading, .tag-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tags-heading { margin-bottom: 16px; }
+.tags-heading h1 { margin: 0; }
+.tags-heading button, .tag-action button { flex-shrink: 0; }
+.tags-layout { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr); gap: 24px; }
+.tags-layout h2 { font-size: 1.25rem; margin-bottom: 10px; }
+.tags-layout h2 small { margin-left: 5px; font: .82rem system-ui, sans-serif; }
+.tag-stock { min-width: 0; }
+.tag-choices, .tag-roster { display: grid; gap: 8px; }
+.tag-choices { grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
+.tag-choice { display: flex; align-items: center; gap: 5px; padding: 7px 8px; font-size: .86rem; white-space: nowrap; }
+.tag-choice .tag-icon { width: 16px; height: 16px; }
+.tag-choice small { margin-left: auto; }
+.tag-choice[aria-pressed="true"], .tag-unit[aria-pressed="true"] { border-color: var(--gold); background: #514835; }
+.tag-roster { grid-template-columns: repeat(auto-fill, minmax(min(148px, 100%), 1fr)); }
+.tag-unit {
+  position: relative; display: flex; align-items: center; gap: 7px; min-height: 68px;
+  padding: 8px 16px 8px 6px; text-align: left;
+}
+.tag-unit .sprite { width: 38px; height: 46px; flex-shrink: 0; }
+.tag-unit-text { min-width: 0; }
+.tag-unit-text > * { display: block; }
+.tag-unit-text strong { font-size: .91rem; }
+.current-tag { color: var(--gold); }
+.tag-action {
+  margin-top: 12px; padding: 12px;
+  background: #223129; border: 1px solid var(--edge); border-radius: 5px;
+}
+.tag-action p { color: #ded7c4; font-size: .88rem; }
 .remove-confirm:not(:disabled) { background: #613b36; border-color: #ac756b; }
-.removal-entry { color: var(--gold); white-space: nowrap; }
-.removal-reward, .removal-notice { color: var(--gold); }
+.tag-entry { color: var(--gold); white-space: nowrap; }
+.tag-reward, .tag-notice { color: var(--gold); }
+.tag-notice:empty { display: none; }
+.tag-notice { margin: 12px 0; }
+.tag-details { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+.tag-details p { margin: 0; font-size: .88rem; line-height: 1.45; }
+.tag-details .tag-icon { width: 32px; height: 32px; }
+.tag-icon { image-rendering: pixelated; object-fit: contain; flex-shrink: 0; }
+.tag-region { display: grid; grid-template-columns: repeat(4, 6px); gap: 2px; padding: 4px; background: #19261f; }
+.tag-region i { width: 6px; height: 6px; background: #41534a; }
+.tag-region i.active { background: #bdebc5; }
+.party .shelf-tag { width: 48px; height: 48px; filter: drop-shadow(0 4px 0 #10181750); }
 
 .spell-inventory { margin-top: 12px; }
 .spell-inventory h4 { margin: 0 0 8px; }
@@ -250,15 +279,17 @@
 .wheel-stats .increased { color: #ffdb8b; }
 .wheel-health { color: #f9b7bd; }
 .wheel-health.increased { color: #b5ecae; }
-.wheel-guardian {
+.tag-badge {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 10px;
-  background: #add5ef;
-  clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
 }
+.tag-badge .tag-icon { display: block; width: 100%; height: 100%; }
+.roster-unit { position: relative; }
+.roster-unit:has(.tag-badge) { padding-right: 22px; }
 .wheel-buff-fx {
   position: absolute;
   inset: 0 3% 8%;
@@ -274,7 +305,18 @@
 .spin-controls { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; margin: 14px 0 8px; }
 .spin-button { display: inline-flex; min-width: 132px; justify-content: space-between; align-items: center; gap: 12px; }
 .spin-controls small { flex: 1; min-width: 130px; }
-.spin-event { min-height: 2.8em; line-height: 1.4; color: #e8d7b6; overflow-wrap: anywhere; }
+.spin-event {
+  display: -webkit-box;
+  height: 2.8em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.4;
+  color: #e8d7b6;
+  overflow-wrap: anywhere;
+}
+#departure-growth { display: block; color: var(--gold); }
+#departure-growth:empty { display: none; }
 #spin-summary summary { color: var(--muted); cursor: pointer; }
 #spin-summary ol { margin: 8px 0 0; padding-inline-start: 1.4em; line-height: 1.5; }
 #spin-summary li + li { margin-top: 5px; }
@@ -313,6 +355,11 @@
   .shop-floor[data-pane="shelf"] .reel-panel { display: none; }
   .wheel-board { max-width: 470px; }
   .shelf-panel .offer-art { block-size: clamp(80px, 21vw, 122px); }
+  .tags-shop { margin: 14px 0; }
+  .tags-layout { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .tag-choices { display: flex; overflow-x: auto; padding: 3px 3px 8px; }
+  .tag-choice { flex: 0 0 auto; }
+  .tag-roster { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .arena-wrap { height: clamp(280px, 69vw, 460px); }
 }
 @media (max-width: 550px) {
@@ -327,7 +374,13 @@
   .shop .intro { gap: 6px; }
   .shop .intro h1 { font-size: 1.35rem; }
   .shop-tools { gap: 5px; }
-  .shop-tools .removal-entry { min-height: 36px; }
+  .shop-tools .tag-entry { min-height: 44px; }
+  .tags-shop { padding-bottom: 94px; }
+  .tag-action {
+    position: fixed; inset: auto 0 0; z-index: 4; border-radius: 0;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .tag-action button { padding-inline: 12px; }
   .reel-panel { padding: 12px 10px; }
   .wheel-board { padding: 3px; }
   .reel-slot { padding: 2px; }

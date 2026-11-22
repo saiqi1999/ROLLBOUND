@@ -1,4 +1,5 @@
 import type {Kind} from '../data.ts';
+import type {AppliedTag} from '../magic-tags.ts';
 import type {OpeningSpell,UnitInstance} from '../shop/model.ts';
 
 export type Point = {x:number;y:number};
@@ -6,7 +7,7 @@ export type Side = 0|1;
 export type Outcome = '胜利'|'落败'|'平局';
 export type Unit = {
   id:string;kind:Kind;side:Side;hp:number;shield:number;bonus:number;healthBonus:number;field:boolean;
-  battleAttackBonus?:number;battleHealthBonus?:number;temporary?:true;
+  battleAttackBonus?:number;battleHealthBonus?:number;temporary?:true;tag?:AppliedTag;cloneOf?:string;
 };
 
 export type Actor = {
@@ -46,7 +47,8 @@ type Phase = '召唤'|'补员'|'法术'|'移动'|'攻击'|'阵亡';
 export type Moment = {
   phase:Phase;text:string;focus:string[];tick:number;
   action?:'attack'|'death'|'empower';spell?:'fireball';
-  source?:string;target?:string;value?:string;valueTargets?:string[];damage?:number;shieldGain?:number;followUp?:true;
+  source?:string;target?:string;value?:string;valueTargets?:string[];followUp?:true;
+  attackId?:string;damage?:number;shieldLost?:number;healthLost?:number;shieldGain?:number;healing?:number;
 };
 export type RecordMoment = (
   phase:Phase,text:string,focus?:string[],

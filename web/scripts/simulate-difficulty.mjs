@@ -1,8 +1,11 @@
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {encounters,REFRESH_COST,REQUIRED_WINS} from '../src/data.ts';
-import {advance,commitBattleWindow,newRun,removalMarkers,removeUnit,simulateBattleWindow,startBattle} from '../src/engine.ts';
+import {advance,commitBattleWindow,newRun,simulateBattleWindow,startBattle} from '../src/engine.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from '../src/shop/rules.ts';
+import {unitStats} from '../src/shop/model.ts';
+import {applyMagicTag} from '../src/shop/tags.ts';
+import {isRegionTag,tagCount,tagIds} from '../src/magic-tags.ts';
 import {FIELD_LIMIT} from '../src/battle/model.ts';
 import {pick,shuffle} from '../src/battle/random.ts';
 
@@ -12,13 +15,13 @@ function mixSeed(seed){
   return (value^(value>>>15))>>>0;
 }
 
-function bestPurchase(run,random,budget,buySpells,buyUnits){
+function bestPurchase(run,random,budget,allowed){
   const available=run.shop.offers.flatMap((offer,index)=>
-    !offer.sold&&offer.price<=budget&&(offer.spell?buySpells:buyUnits)?[{offer,index}]:[]);
+    !offer.sold&&offer.price<=budget&&allowed[offer.type]?[{offer,index}]:[]);
   let bestSpend=0,plans=[];
   for(let mask=1;mask<2**available.length;mask++){
     const combination=available.filter((_,index)=>mask&(1<<index));
-    if(!run.roster.length&&!combination.some(({offer})=>!offer.spell))continue;
+    if(!run.roster.length&&!combination.some(({offer})=>offer.type==='unit'))continue;
     const cost=combination.reduce((sum,{offer})=>sum+offer.price,0);
     if(cost>budget||cost<bestSpend)continue;
     if(cost>bestSpend){bestSpend=cost;plans=[];}
@@ -27,33 +30,69 @@ function bestPurchase(run,random,budget,buySpells,buyUnits){
   return plans.length?shuffle(pick(plans,random),random):[];
 }
 
-export function spendShopGold(run,{spins=2,maxRefreshes=1,buySpells=true,buyUnits=true}={}){
+function equipBoughtTags(run){
+  const counts={};
+  for(const tag of tagIds){
+    if(tag==='remove')continue;
+    while(tagCount(run.tagInventory,tag)){
+      const candidates=run.roster.filter(unit=>!unit.tag);
+      if(!candidates.length)break;
+      const score=unit=>{
+        const {attack,health}=unitStats(unit);
+        if(isRegionTag(tag))return ['king','greatswordSkeleton','wizard','templar','swordsman','archer','armoredOrc'].includes(unit.kind)?1:0;
+        if(tag==='team'||tag==='growth')return health;
+        return attack+health/5;
+      };
+      candidates.sort((left,right)=>score(right)-score(left));
+      if(!applyMagicTag(run,candidates[0].id,tag).ok)break;
+      counts[tag]=(counts[tag]??0)+1;
+    }
+  }
+  return counts;
+}
+
+export function spendShopGold(run,{spins=2,maxRefreshes=1,buySpells=true,buyUnits=true,buyTags=false}={}){
   const random={rng:mixSeed(run.seed^Math.imul(run.stage+1,0x7f4a7c15))};
   const spinCount=Array.isArray(spins)?spins[run.stage]:spins;
   const reserve=Array.from({length:spinCount},(_,index)=>spinCost(index)).reduce((total,cost)=>total+cost,0);
   while(run.phase==='shop'&&run.gold>reserve){
     const budget=run.gold-reserve;
-    const purchases=bestPurchase(run,random,budget,buySpells,buyUnits);
+    const purchases=bestPurchase(run,random,budget,{unit:buyUnits,spell:buySpells,tag:buyTags});
     if(purchases.length){
       for(const index of purchases)if(!buy(run,index))throw Error('Invalid simulated purchase');
     }else if(run.shop.refreshes>=maxRefreshes||budget<=REFRESH_COST||!refreshShop(run))break;
   }
+  const applied=buyTags?equipBoughtTags(run):{};
+  let positioned=0,fallbackDraws=0;
   for(let count=0;count<spinCount;count++){
-    if(!resolveSpin(run))break;
+    const result=resolveSpin(run);
+    if(!result)break;
+    positioned+=result.positioned;
+    fallbackDraws+=result.fallbackDraws;
   }
+  return {applied,positioned,fallbackDraws};
 }
 
-export function simulateDifficulty(count,offset=100000,{removeSlimes=false,skipRecruitRound,...shopPolicy}={}){
+export function simulateDifficulty(count,offset=100000,{removeSlimes=false,skipRecruitRound,buyTags=false,...shopPolicy}={}){
   const stages=encounters.map(()=>({reached:0,wins:0,losses:0,draws:0,unspent:0,roster:0,spins:0,full:0,reserves:0}));
+  const tags={
+    applied:{},positioned:0,fallbackDraws:0,clones:0,attacks:0,hits:0,damage:0,actualLoss:0,
+    healing:0,shield:0,overkillHealing:0,overkillShield:0,
+  };
   for(let index=0;index<count;index++){
     const run=newRun(mixSeed(index+offset));
     while(run.phase==='shop'){
       const stage=stages[run.stage];
-      spendShopGold(run,run.stage+1===skipRecruitRound?{...shopPolicy,buyUnits:false}:shopPolicy);
+      const shop=spendShopGold(run,{...shopPolicy,buyTags,buyUnits:run.stage+1!==skipRecruitRound&&shopPolicy.buyUnits!==false});
+      if(buyTags){
+        for(const [tag,amount] of Object.entries(shop.applied))tags.applied[tag]=(tags.applied[tag]??0)+amount;
+        tags.positioned+=shop.positioned;
+        tags.fallbackDraws+=shop.fallbackDraws;
+      }
       if(removeSlimes){
-        while(run.roster.length>1&&removalMarkers(run)){
+        while(run.roster.length>1&&tagCount(run.tagInventory,'remove')){
           const slime=run.roster.find(unit=>unit.kind==='slime');
-          if(!slime||!removeUnit(run,slime.id))break;
+          if(!slime||!applyMagicTag(run,slime.id,'remove').ok)break;
         }
       }
       stage.reached++;
@@ -66,9 +105,26 @@ export function simulateDifficulty(count,offset=100000,{removeSlimes=false,skipR
         stage.losses++;
         break;
       }
+      const shieldIds=new Set(run.roster.filter(unit=>unit.tag==='shield').map(unit=>unit.id));
       while(run.phase==='battle'){
-        commitBattleWindow(run,simulateBattleWindow(run.battle,{captureEvents:false}));
+        const window=simulateBattleWindow(run.battle,{captureEvents:buyTags,captureFrames:false});
+        if(buyTags){
+          const attacks=window.events.filter(event=>event.attackId&&event.source.startsWith('0-'));
+          tags.attacks+=new Set(attacks.map(event=>event.attackId)).size;
+          tags.hits+=attacks.length;
+          for(const hit of attacks){
+            const actual=hit.healthLost+hit.shieldLost;
+            tags.damage+=hit.damage;
+            tags.actualLoss+=actual;
+            tags.healing+=hit.healing;
+            tags.shield+=hit.shieldGain;
+            tags.overkillHealing+=Math.max(0,hit.healing-actual);
+            if(shieldIds.has(hit.source))tags.overkillShield+=hit.damage-actual;
+          }
+        }
+        commitBattleWindow(run,window);
       }
+      if(buyTags)tags.clones+=run.battle.units.filter(unit=>unit.cloneOf).length;
       const result=run.results.at(-1);
       if(result==='胜利')stage.wins++;
       else if(result==='落败')stage.losses++;
@@ -76,7 +132,7 @@ export function simulateDifficulty(count,offset=100000,{removeSlimes=false,skipR
       advance(run);
     }
   }
-  return {count,clears:stages[REQUIRED_WINS-1].wins,stages};
+  return {count,clears:stages[REQUIRED_WINS-1].wins,stages,...(buyTags?{tags}:{})};
 }
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
@@ -85,13 +141,15 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const skipFlag=flags.find(flag=>flag.startsWith('--skip-recruit='));
   const skipRecruitRound=skipFlag&&Number(skipFlag.split('=')[1]);
   if(!Number.isSafeInteger(count)||count<1||!Number.isSafeInteger(offset)||offset<0||
-    flags.some(flag=>flag!==skipFlag&&!['--remove-slimes','--recruit','--spin','--grow'].includes(flag))||
+    flags.some(flag=>flag!==skipFlag&&!['--remove-slimes','--recruit','--spin','--grow','--tags'].includes(flag))||
     (skipFlag!==undefined&&(!Number.isSafeInteger(skipRecruitRound)||skipRecruitRound<2||skipRecruitRound>REQUIRED_WINS))){
-    throw Error('Usage: node scripts/simulate-difficulty.mjs [count] [seed offset] [--remove-slimes] [--recruit|--spin|--grow] [--skip-recruit=2–7]');
+    throw Error('Usage: node scripts/simulate-difficulty.mjs [count] [seed offset] [--remove-slimes] [--tags] [--recruit|--spin|--grow] [--skip-recruit=2–7]');
   }
   const shopPolicy=flags.includes('--recruit')?{spins:0,maxRefreshes:Infinity,buySpells:false}:
     flags.includes('--spin')?{spins:4}:flags.includes('--grow')?{spins:[2,2,2,3,3,4,4]}:{};
-  const report=simulateDifficulty(count,offset,{...shopPolicy,skipRecruitRound,removeSlimes:flags.includes('--remove-slimes')});
+  const report=simulateDifficulty(count,offset,{
+    ...shopPolicy,skipRecruitRound,removeSlimes:flags.includes('--remove-slimes'),buyTags:flags.includes('--tags'),
+  });
   const percent=(n,d)=>d?(100*n/d).toFixed(1)+'%':'—';
   const mean=(n,d)=>d?(n/d).toFixed(2):'—';
   console.table(report.stages.map((row,index)=>({
@@ -101,4 +159,5 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     '平均摇盘':mean(row.spins,row.reached),'平均余款':mean(row.unspent,row.reached),
   })));
   console.log('七战通关 '+report.clears+'/'+count+' · '+percent(report.clears,count));
+  if(report.tags)console.log(JSON.stringify(report.tags));
 }

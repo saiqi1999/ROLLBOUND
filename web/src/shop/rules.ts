@@ -2,16 +2,17 @@ import {
   ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,
   ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SKELETON_GOLD,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,WEREWOLF_RECRUIT_GAIN,
   canEvolveOrc,eliteOrcEvolutionGain,hasGuardian,humanKinds,
-  spellKinds,spellOffer,spells,unitKinds,unitOffer,units,wizardEntryGain,
-  type Kind,type SpellKind,
+  spellKinds,spellOffer,spells,tagOffer,unitKinds,unitOffer,units,wizardEntryGain,
+  type Kind,type Offer,type SpellKind,
 } from '../data.ts';
 import type {Run} from '../engine.ts';
-import {pick,shuffle,type RandomState} from '../battle/random.ts';
+import {pick,rng,shuffle,type RandomState} from '../battle/random.ts';
+import {addTag,tagIds} from '../magic-tags.ts';
 import {
   grantGrowth,unitStats,wheelFrame,type ShopEvent,type ShopSlot,type ShopState,
   type SpellInstance,type UnitGrowth,type UnitInstance,
 } from './model.ts';
-import {drawShopBoard,neighborSlots,randomOpenSlot,unitSlot,WHEEL_SIZE} from './wheel.ts';
+import {drawPaidShopBoard,drawShopBoard,neighborSlots,randomOpenSlot,unitSlot} from './wheel.ts';
 
 function shelfRandom(seed:number,stage:number,refreshes:number){
   return {rng:(seed^Math.imul(stage+1,0x9e3779b1)^Math.imul(refreshes+1,0x85ebca6b))>>>0};
@@ -23,8 +24,8 @@ function previewRandom(seed:number,stage:number,salt=0){
 
 export function shopOffers(seed:number,stage:number,refreshes=0){
   const random=shelfRandom(seed,stage,refreshes);
-  const offers=shuffle([...unitKinds],random).slice(0,3).map(unitOffer);
-  offers.push(spellOffer(pick(spellKinds,random)));
+  const offers:Offer[]=shuffle([...unitKinds],random).slice(0,3).map(unitOffer);
+  offers.push(rng(random)<.5?spellOffer(pick(spellKinds,random)):tagOffer(pick(tagIds,random)));
   return offers;
 }
 
@@ -35,33 +36,10 @@ export function createShop(seed:number,stage:number,roster:UnitInstance[]=[]):Sh
   };
 }
 
-export function restoreShopBoard(run:Run){
-  if(Array.isArray(run.shop.board)&&run.shop.board.length===WHEEL_SIZE)return;
-  const random=previewRandom(run.seed,run.stage);
-  const previous=run.shop.lastSpin?.settled;
-  if(previous?.length!==WHEEL_SIZE){
-    run.shop.board=drawShopBoard(run.roster,[],random);
-    return;
-  }
-  const byId=new Map(run.roster.map(unit=>[unit.id,unit]));
-  const board=previous.map(slot=>{
-    const unit=slot?.type==='unit'?byId.get(slot.id):undefined;
-    if(!unit)return null;
-    byId.delete(unit.id);
-    return unitSlot(unit);
-  });
-  for(const unit of byId.values()){
-    const index=randomOpenSlot(board,random);
-    if(index===undefined)break;
-    board[index]=unitSlot(unit);
-  }
-  run.shop.board=board;
-}
-
 const nextUnitId=(run:Run)=>'0-'+run.nextId++;
 
 export function recruit(run:Run,kind:Kind,gainedAttack=0,gainedHealth=0){
-  const unit={id:nextUnitId(run),kind,gainedAttack,gainedHealth,startingArmor:0};
+  const unit:UnitInstance={id:nextUnitId(run),kind,gainedAttack,gainedHealth,startingArmor:0};
   run.roster.push(unit);
   return unit;
 }
@@ -77,7 +55,8 @@ export function buy(run:Run,index:number){
   if(run.phase!=='shop'||!offer||offer.sold||run.gold<offer.price)return false;
   run.gold-=offer.price;
   offer.sold=true;
-  if(offer.spell)addSpell(run,offer.spell);
+  if(offer.type==='tag')addTag(run.tagInventory,offer.tag);
+  else if(offer.type==='spell')addSpell(run,offer.spell);
   else{
     const wolves=run.roster.filter(unit=>unit.kind==='werewolf');
     const recruits=offer.kinds.map(kind=>recruit(run,kind));
@@ -395,7 +374,7 @@ export function resolveSpin(run:Run){
   run.roster.push(...waiting);
   run.pendingRecruits=[];
   const seed=(run.seed^Math.imul(run.stage+1,0xb4b82e39)^Math.imul(++run.shop.paidSpins,0x7f4a7c15))>>>0;
-  const board=drawShopBoard(run.roster,run.spells,{rng:seed});
+  const {board,positioned}=drawPaidShopBoard(run.roster,run.spells,{rng:seed});
   const drawn=wheelFrame(board,run.roster);
   const spin:Spin={
     run,board,units:new Map(run.roster.map(unit=>[unit.id,unit])),random:{rng:(seed^0x92dbf76b)>>>0},events:[],
@@ -414,7 +393,10 @@ export function resolveSpin(run:Run){
     resolveEvolutions(run,spin);
   }while(spin.pending.size);
   const settled=wheelFrame(board,run.roster);
-  const result={drawn:drawn.board,drawnStats:drawn.stats,settled:settled.board,settledStats:settled.stats,events:spin.events};
+  const result={
+    drawn:drawn.board,drawnStats:drawn.stats,settled:settled.board,settledStats:settled.stats,events:spin.events,
+    positioned,fallbackDraws:drawn.board.filter(Boolean).length-positioned,
+  };
   run.shop.board=board;
   run.shop.lastSpin=result;
   return result;

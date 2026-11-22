@@ -1,7 +1,8 @@
 import {units,type Kind,type Offer,type SpellKind} from '../data.ts';
+import type {AppliedTag} from '../magic-tags.ts';
 
 export type UnitInstance = {
-  id:string;kind:Kind;gainedAttack:number;gainedHealth:number;startingArmor:number;evolutionTriggers?:number;
+  id:string;kind:Kind;gainedAttack:number;gainedHealth:number;startingArmor:number;evolutionTriggers?:number;tag?:AppliedTag;
 };
 export type SpellInstance = {id:string;kind:SpellKind};
 export type OpeningSpell = SpellInstance&{kind:'fireball'};
@@ -18,7 +19,7 @@ export type ShopEvent = {
   buffed?:string[];
   after:ShopFrame;
 };
-export type WheelStats = {attack:number;health:number};
+export type WheelStats = {attack:number;health:number;tag?:AppliedTag};
 export type ShopFrame = {board:ShopSlot[];stats:Record<string,WheelStats>};
 export type ShopSpinResult = {
   drawn:ShopSlot[];
@@ -26,6 +27,8 @@ export type ShopSpinResult = {
   settled:ShopSlot[];
   settledStats:ShopFrame['stats'];
   events:ShopEvent[];
+  positioned:number;
+  fallbackDraws:number;
 };
 export type ShopState = {
   offers:Offer[];
@@ -46,6 +49,7 @@ export function unitStats(unit:UnitInstance):WheelStats{
   return {
     attack:units[unit.kind].atk+unit.gainedAttack,
     health:units[unit.kind].hp+unit.gainedHealth,
+    ...(unit.tag?{tag:unit.tag}:{}),
   };
 }
 

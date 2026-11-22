@@ -1,34 +1,33 @@
-import {encounters,REFRESH_COST,SLIME_REMOVAL_GAIN,spells,unitEffectText,units,type Kind} from '../data.ts';
-import {canStartBattle,removalMarkers,type Run} from '../engine.ts';
+import {encounters,REFRESH_COST,spells,unitEffectText,units,type Kind} from '../data.ts';
+import {canStartBattle,type Run} from '../engine.ts';
 import {FIELD_LIMIT} from '../battle/model.ts';
+import {GROWTH_TAG_GAIN,magicTags,tagCount,type AppliedTag} from '../magic-tags.ts';
 import {scenery} from '../landscape.ts';
 import {unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
 import {canSpin,spinCost} from '../shop/rules.ts';
-import {art,coin,header,heart,spellArt,unitTags} from './common.ts';
+import {art,coin,header,heart,spellArt,tagArt,tagBadge,unitTags} from './common.ts';
 import {renderReels} from './reels.ts';
 
 export type ShopPane='wheel'|'shelf';
-export const slimeRemovalBenefit='其余所有单位永久获得 +'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。';
-
-function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:string,armor=0){
+function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:string,armor=0,tag?:AppliedTag){
   return '<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+
     '"'+(id?' data-unit-id="'+id+'"':'')+'>'+art(kind)+'<span>'+units[kind].name+
     '<small>⚔ '+attack+'　'+heart+' '+health+(armor?' · 护甲 '+armor:'')+'</small></span>'+
-    (count>1?'<b>×'+count+'</b>':'')+'</button>';
+    (count>1?'<b>×'+count+'</b>':'')+(tag?tagBadge(tag):'')+'</button>';
 }
 
 function alliedRoster(run:Run){
   const groups=new Map<string,{unit:UnitInstance;count:number}>();
   for(const unit of run.roster){
     const {attack,health}=unitStats(unit);
-    const key=[unit.kind,attack,health,unit.startingArmor,unit.evolutionTriggers??0].join(':');
+    const key=[unit.kind,attack,health,unit.startingArmor,unit.evolutionTriggers??0,unit.tag].join(':');
     const group=groups.get(key);
     if(group)group.count++;
     else groups.set(key,{unit,count:1});
   }
   return [...groups.values()].map(({unit,count})=>{
     const {attack,health}=unitStats(unit);
-    return rosterButton(unit.kind,attack,health,count,unit.id,unit.startingArmor);
+    return rosterButton(unit.kind,attack,health,count,unit.id,unit.startingArmor,unit.tag);
   }).join('');
 }
 
@@ -61,19 +60,22 @@ export function changeShopPane(root:HTMLElement,pane:ShopPane){
 export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   root.querySelector('#shop-gold')!.textContent=String(run.gold);
   root.querySelector<HTMLButtonElement>('[data-act="refresh"]')!.disabled=spinning||run.gold<REFRESH_COST;
-  root.querySelector<HTMLButtonElement>('[data-act="manage-removal"]')!.disabled=spinning;
+  const tagEntry=root.querySelector<HTMLButtonElement>('[data-act="manage-tags"]')!;
+  tagEntry.disabled=spinning;
+  tagEntry.textContent='打标签 · '+tagCount(run.tagInventory);
   for(const button of root.querySelectorAll<HTMLButtonElement>('[data-shop-pane]'))button.disabled=spinning;
   for(const button of root.querySelectorAll<HTMLButtonElement>('[data-buy-index]')){
     const offer=run.shop.offers[Number(button.dataset.buyIndex)];
-    const action=offer.spell?'购买':'招募';
+    const action=offer.type==='unit'?'招募':'购买';
     const state=offer.sold?'sold':run.gold<offer.price?'short':'ready';
     const label=state==='sold'?'已'+action:state==='short'?'金币不足':action;
     const card=button.closest('.offer')!;
     button.disabled=spinning||state!=='ready';
     button.dataset.state=state;
     card.classList.toggle('sold',offer.sold);
-    card.querySelector('.offer-effect')!.textContent=offer.spell?spells[offer.spell].text:
-      unitEffectText(offer.kinds[0],{spellCasts:run.spellCasts});
+    card.querySelector('.offer-effect')!.textContent=offer.type==='unit'?
+      unitEffectText(offer.kinds[0],{spellCasts:run.spellCasts}):
+      offer.type==='spell'?spells[offer.spell].text:magicTags[offer.tag].text;
     button.innerHTML='<span>'+label+'</span>'+(offer.sold?'':'<span class="offer-cost" aria-hidden="true">'+coin+offer.price+'</span>');
     button.setAttribute('aria-label',offer.sold?label+' '+offer.title:action+' '+offer.title+' · '+offer.price+' 金币');
   }
@@ -82,7 +84,8 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   const ready=canStartBattle(run);
   const recruitsWaiting=run.pendingRecruits.length;
   const awaitingSpin=recruitsWaiting>0&&canSpin(run);
-  const stranded=!ready&&!awaitingSpin&&!run.shop.offers.some(offer=>!offer.spell&&!offer.sold&&offer.price<=run.gold)&&run.gold<=REFRESH_COST;
+  const stranded=!ready&&!awaitingSpin&&!run.shop.offers.some(offer=>
+    offer.type==='unit'&&!offer.sold&&offer.price<=run.gold)&&run.gold<=REFRESH_COST;
   const fight=root.querySelector<HTMLButtonElement>('[data-act="fight"]')!;
   fight.disabled=spinning||!ready;
   fight.hidden=stranded;
@@ -90,6 +93,9 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   root.querySelector('#departure-note')!.textContent=stranded?'余款不足以招募，可重新开局。':
     ready?'随机首发 '+Math.min(count,FIELD_LIMIT)+' · 候补 '+Math.max(0,count-FIELD_LIMIT):
     awaitingSpin?'摇盘后，待入队单位可出战。':'招募至少 1 名单位后开战。';
+  const growing=run.roster.filter(unit=>unit.tag==='growth').length;
+  root.querySelector('#departure-growth')!.textContent=growing?
+    growing+' 名单位开战前永久 +'+GROWTH_TAG_GAIN+'/+'+GROWTH_TAG_GAIN:'';
   root.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+count+' 名</small></h3>'+
     (count?'<div class="roster">'+alliedRoster(run)+'</div>':'<p class="muted">从货架招募单位。</p>')+spellInventory(run);
 
@@ -113,8 +119,9 @@ export function paintSpinSummary(root:HTMLElement,run:Run){
   root.querySelector('#spin-event')!.textContent=spin?(spin.events.at(-1)?.text??'本次未触发联动。'):
     '招募后实时上盘。摇盘触发联动。';
   const details=root.querySelector<HTMLDetailsElement>('#spin-summary')!;
-  details.hidden=!spin?.events.length;
-  details.querySelector('summary')!.textContent='上次停盘 · '+(spin?.events.length??0)+' 项效果';
+  details.hidden=!spin;
+  details.querySelector('summary')!.textContent=spin?
+    '上次停盘 · 定位 '+spin.positioned+' · 补抽 '+spin.fallbackDraws+' · '+spin.events.length+' 项效果':'';
   details.querySelector('ol')!.replaceChildren(...(spin?.events??[]).map(event=>{
     const line=document.createElement('li');
     line.textContent=event.text;
@@ -129,21 +136,23 @@ export function paintShopBoard(root:HTMLElement,run:Run){
 export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
   const encounter=encounters[run.stage];
   const offers=run.shop.offers.map((offer,index)=>{
-    const spell=offer.spell,unit=offer.kinds[0];
-    const artButton=spell?'data-spell="'+spell+'"':'data-kind="'+unit+'"';
-    const stats=spell?'<span class="unit-tags">一次性法术</span>':unitTags(unit)+
-      '<span class="offer-stats">⚔ '+units[unit].atk+' <span class="offer-health">'+heart+' '+units[unit].hp+'</span></span>';
-    const portrait=spell?spellArt(spell,'lead'):art(unit,'lead');
-    return '<article class="offer" aria-labelledby="offer-title-'+index+'"><button class="offer-art'+(spell?' spell-diorama':'')+
-      '" '+artButton+' aria-label="查看 '+offer.title+' 详情">'+(spell?'':'<canvas aria-hidden="true" data-scene="'+unit+'"></canvas>')+
+    const unit=offer.type==='unit'?offer.kinds[0]:undefined;
+    const artButton=offer.type==='spell'?'data-spell="'+offer.spell+'"':
+      offer.type==='tag'?'data-tag-info="'+offer.tag+'"':'data-kind="'+unit+'"';
+    const stats=unit?unitTags(unit)+
+      '<span class="offer-stats">⚔ '+units[unit].atk+' <span class="offer-health">'+heart+' '+units[unit].hp+'</span></span>':
+      '<span class="unit-tags">'+(offer.type==='tag'?'魔法标签':'一次性法术')+'</span>';
+    const portrait=offer.type==='unit'?art(offer.kinds[0],'lead'):
+      offer.type==='spell'?spellArt(offer.spell,'lead'):tagArt(offer.tag,'shelf-tag');
+    return '<article class="offer" aria-labelledby="offer-title-'+index+'"><button class="offer-art'+(unit?'':' spell-diorama')+
+      '" '+artButton+' aria-label="查看 '+offer.title+' 详情">'+(unit?'<canvas aria-hidden="true" data-scene="'+unit+'"></canvas>':'')+
       '<span class="party">'+portrait+'</span></button><div class="cardbody"><h2 id="offer-title-'+index+'">'+offer.title+
       '</h2><div class="offer-meta">'+stats+'</div><p class="offer-effect"></p>'+
       '<button class="gold offer-buy" data-buy-index="'+index+'"></button></div></article>';
   }).join('');
   root.innerHTML=header(run)+'<section class="shop"><div class="intro"><div><div class="kicker">商店 '+(run.stage+1)+
     ' / '+encounters.length+'</div><h1>'+encounter.camp+'营地</h1></div><div class="shop-tools"><div class="purse">'+coin+
-    '<strong id="shop-gold"></strong><span>金币</span></div><button class="quiet removal-entry" data-act="manage-removal">'+
-    '移除标记 · '+removalMarkers(run)+'</button></div></div>'+
+    '<strong id="shop-gold"></strong><span>金币</span></div><button class="quiet tag-entry" data-act="manage-tags"></button></div></div>'+
     '<div class="shop-tabs" aria-label="商店区域"><button data-shop-pane="wheel">轮盘</button>'+
     '<button data-shop-pane="shelf">货架</button></div><div class="shop-floor">'+
     '<section class="reel-panel" id="wheel-panel" aria-label="4×4 商店轮盘"><div class="reel-heading"><h2>构筑轮盘</h2>'+
@@ -157,29 +166,12 @@ export function renderShop(root:HTMLElement,run:Run,pane:ShopPane){
     '</div><p id="purchase-status" class="sr-only" role="status"></p></section></div>'+
     '<div class="loadout"><div id="shop-roster"></div><div><h3>下战对手 <small>'+encounter.name+
     '</small></h3><div class="roster enemy">'+enemyRoster(run.stage)+'</div></div></div>'+
-    '<div class="depart"><span id="departure-note"></span><button class="primary" data-act="fight" aria-describedby="departure-note">'+
+    '<div class="depart"><div><span id="departure-note"></span><small id="departure-growth"></small></div>'+
+    '<button class="primary" data-act="fight" aria-describedby="departure-note departure-growth">'+
     '开始第 '+(run.stage+1)+' 战</button><button class="primary" data-act="reset" hidden>重新开局</button></div></section>';
   changeShopPane(root,pane);
   paintShopBoard(root,run);
   paintShopControls(root,run);
   paintSpinSummary(root,run);
   for(const canvas of root.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(canvas,canvas.dataset.scene!);
-}
-
-export function renderRemoval(root:HTMLElement,run:Run,selectedId:string|undefined,notice:string){
-  const markers=removalMarkers(run);
-  const selected=run.roster.find(unit=>unit.id===selectedId);
-  const benefit=selected?.kind==='slime'&&run.roster.length>1?slimeRemovalBenefit:'';
-  const pieces=run.roster.map(unit=>{
-    const {id,kind}=unit,{attack,health}=unitStats(unit);
-    return '<button class="removal-unit" data-remove-id="'+id+'" aria-pressed="'+(selectedId===id)+'" '+(markers?'':'disabled')+'>'+
-      art(kind)+'<span><strong>'+units[kind].name+'</strong>'+unitTags(kind)+'<small>⚔ '+attack+'　'+heart+' '+health+'</small></span></button>';
-  }).join('');
-  root.innerHTML=header(run)+'<section class="removal-shop"><div class="removal-heading"><div><h1>移除棋子</h1>'+
-    '<p>第 2、4、6 战胜利时各获得 1 个移除标记。</p></div><button class="quiet" data-act="back-shop">返回商店</button></div>'+
-    '<p class="removal-balance">移除标记 <strong>'+markers+'</strong>　·　阵容 '+run.roster.length+' 名</p>'+
-    (pieces?'<div class="removal-roster">'+pieces+'</div>':'<p>阵容为空，可返回商店招募棋子。</p>')+
-    '<div class="removal-action"><p>'+(selected?'将从本局阵容移除 '+units[selected.kind].name+'。'+benefit:
-      markers&&pieces?'选择要移除的棋子。':'')+'</p><button class="remove-confirm" data-act="confirm-removal" '+
-    (selected&&markers?'':'disabled')+'>移除 · 1 标记</button></div><p class="removal-notice" role="status">'+notice+'</p></section>';
 }

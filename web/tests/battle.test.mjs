@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {encounters,spellOffer,unitEffectText,unitOffer} from '../src/data.ts';
-import {advance,canStartBattle,newRun,removalMarkers,removeUnit,startBattle} from '../src/engine.ts';
+import {advance,canStartBattle,newRun,startBattle} from '../src/engine.ts';
+import {addTag,tagCount} from '../src/magic-tags.ts';
 import {unitStats} from '../src/shop/model.ts';
 import {loadRun,saveRun} from '../src/save.ts';
-import {buy,recruit,refreshShop,resolveSpin,restoreShopBoard,shopOffers,spinCost} from '../src/shop/rules.ts';
+import {buy,recruit,refreshShop,resolveSpin,shopOffers,spinCost} from '../src/shop/rules.ts';
+import {applyMagicTag} from '../src/shop/tags.ts';
 import {drawShopBoard,neighborSlots} from '../src/shop/wheel.ts';
 
 function sampleSpin(kinds,spellKinds,condition,prepare=()=>{}){
@@ -22,15 +24,15 @@ function sampleSpin(kinds,spellKinds,condition,prepare=()=>{}){
   assert.fail('The seeded samples never produced the required layout');
 }
 
-test('every shop has three distinct unit cards, one spell, and the new round income',()=>{
+test('every shop has three distinct unit cards, one spell or tag, and the round income',()=>{
   assert.deepEqual(encounters.map(stage=>stage.gold),[20,8,10,12,14,16,18]);
   const run=newRun(78);
   assert.equal(run.gold,20);
   for(let stage=0;stage<encounters.length;stage++){
     const offers=shopOffers(run.seed,stage);
     assert.equal(new Set(offers.slice(0,3).map(offer=>offer.kinds[0])).size,3);
-    assert.ok(offers.slice(0,3).every(offer=>!offer.spell));
-    assert.ok(offers[3].spell);
+    assert.ok(offers.slice(0,3).every(offer=>offer.type==='unit'));
+    assert.ok(['spell','tag'].includes(offers[3].type));
   }
   assert.equal(unitOffer('page').price,1);
   assert.equal(unitOffer('guard').price,2);
@@ -149,24 +151,23 @@ test('a multi-unit purchase fills only the remaining vacancies without changing 
   assert.equal(run.shop.board.filter(slot=>slot?.kind==='page').length,0);
 });
 
-test('an older save restores the preview and retains all units without rolling or spending',()=>{
+test('a shop save restores the current preview and the prior stop without rolling or spending',t=>{
   const run=newRun(18);
   run.shop.offers=[unitOffer('guard'),unitOffer('archer'),unitOffer('lancer')];
   assert.ok(buy(run,0));
   assert.ok(buy(run,1));
   const spin=resolveSpin(run);
   assert.ok(buy(run,2));
-  const saved=JSON.parse(JSON.stringify(run));
-  delete saved.shop.board;
-  restoreShopBoard(saved);
+  const store=mockStorage(t);
+  assert.ok(saveRun(run));
+  assert.ok(store.has('rollbound.shop-wheel.v6'));
+  const saved=loadRun();
   assert.equal(saved.shop.paidSpins,1);
   assert.equal(saved.gold,run.gold);
   assert.deepEqual(saved.roster,run.roster);
   assert.ok(saved.roster.every(unit=>saved.shop.board.some(slot=>slot?.id===unit.id)));
   assert.ok(spin.settled.every((slot,index)=>!slot||slot.id===saved.shop.board[index].id));
-  const board=structuredClone(saved.shop.board);
-  restoreShopBoard(saved);
-  assert.deepEqual(saved.shop.board,board);
+  assert.deepEqual(saved.shop.board,run.shop.board);
 });
 
 test('archer grows once per roll beside any guardian, with no additional growth for multiple guardians',()=>{
@@ -224,19 +225,7 @@ test('greatsword copies keep permanent stats and wait across saves and battles f
   assert.ok(roll.settled.every(slot=>slot?.id!==original.id&&slot?.id!==copy.id));
   assert.deepEqual([king.gainedAttack,king.gainedHealth],[2,2]);
 
-  const storage=new Map();
-  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
-  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
-    getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),
-  }});
-  t.after(()=>{
-    if(previous)Object.defineProperty(globalThis,'localStorage',previous);
-    else delete globalThis.localStorage;
-  });
-  const noQueue=structuredClone(run);
-  delete noQueue.pendingRecruits;
-  assert.ok(saveRun(noQueue));
-  assert.deepEqual(loadRun().pendingRecruits,[]);
+  mockStorage(t);
   assert.ok(saveRun(run));
   const loaded=loadRun();
   assert.deepEqual(loaded,run);
@@ -277,7 +266,8 @@ test('a priest and the removal marker cannot create a greatsword skeleton copy',
   assert.deepEqual(roll.events,[]);
   assert.deepEqual(run.roster,[priest,skeleton]);
   run.results=['胜利','胜利'];
-  assert.ok(removeUnit(run,skeleton.id));
+  addTag(run.tagInventory,'remove');
+  assert.ok(applyMagicTag(run,skeleton.id,'remove').ok);
   assert.deepEqual(run.roster,[priest]);
 });
 
@@ -428,13 +418,13 @@ test('slime removal grants permanent growth and preserves each remaining instanc
   const slime=recruit(run,'slime');
   const guard=recruit(run,'guard',4,4);
   guard.startingArmor=3;
-  run.results=['胜利','胜利'];
+  addTag(run.tagInventory,'remove');
   run.shop.board[5]={type:'unit',id:slime.id,kind:'slime'};
   run.shop.board[6]={type:'unit',id:orc.id,kind:'orc'};
-  assert.equal(removalMarkers(run),1);
-  assert.ok(removeUnit(run,slime.id));
-  assert.equal(removalMarkers(run),0);
-  assert.equal(removeUnit(run,slime.id),false);
+  assert.equal(tagCount(run.tagInventory,'remove'),1);
+  assert.ok(applyMagicTag(run,slime.id,'remove').ok);
+  assert.equal(tagCount(run.tagInventory,'remove'),0);
+  assert.equal(applyMagicTag(run,slime.id,'remove').ok,false);
   assert.deepEqual(run.roster,[orc,guard]);
   assert.deepEqual([guard.gainedAttack,guard.gainedHealth],[6,6]);
   assert.equal(orc.kind,'armoredOrc');
@@ -453,16 +443,8 @@ test('a committed shop result survives reload without consuming its spells or mo
   assert.deepEqual(saved,run);
 });
 
-test('an open legacy shop converts its pending stat gains once when the run is saved in the new format',t=>{
-  const run=newRun(88);
-  const guard=recruit(run,'guard',2,3);
-  const {openingSpells,...shop}=run.shop;
-  const {startingArmor,...piece}=guard;
-  const storage=new Map([['rollbound.shop-wheel.v4',JSON.stringify({
-    ...run,version:4,roster:[piece],shop:{...shop,preparations:{
-      openingSpells,buffs:{[guard.id]:{wizard:{attack:1,health:1},axeman:{shield:3}}},
-    }},
-  })]]);
+function mockStorage(t){
+  const storage=new Map();
   const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
     getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),
@@ -471,9 +453,18 @@ test('an open legacy shop converts its pending stat gains once when the run is s
     if(previous)Object.defineProperty(globalThis,'localStorage',previous);
     else delete globalThis.localStorage;
   });
-  const loaded=loadRun();
-  assert.equal(loaded.version,5);
-  assert.deepEqual(loaded.roster[0],{...guard,gainedAttack:3,gainedHealth:4,startingArmor:3});
-  assert.ok(saveRun(loaded));
-  assert.deepEqual(loadRun(),loaded);
+  return storage;
+}
+
+test('an older save opens a new game while v6 restores the inventory and equipped tags',t=>{
+  const storage=mockStorage(t);
+  const run=newRun(88);
+  const guard=recruit(run,'guard',2,3);
+  storage.set('rollbound.shop-wheel.v5',JSON.stringify({...run,version:5}));
+  assert.equal(loadRun(),undefined);
+  addTag(run.tagInventory,'shield');
+  addTag(run.tagInventory,'remove');
+  assert.ok(applyMagicTag(run,guard.id,'shield').ok);
+  assert.ok(saveRun(run));
+  assert.deepEqual(loadRun(),run);
 });
