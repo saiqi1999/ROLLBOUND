@@ -9,7 +9,7 @@ const base=import.meta.env.BASE_URL+'art/';
 const actions:Record<Kind,string[]>=Object.fromEntries(
   Object.keys(units).map(k=>[k,k==='medic'?['idle','walk','attack','death','heal']:['idle','walk','attack','death']])
 ) as Record<Kind,string[]>;
-const effectStills={heal:1,empower:1,surge:3,fireball:0,recruit:3} as const;
+const effectStills={heal:1,empower:1,fireball:0} as const;
 type Pose = 'attack'|'heal'|'death';
 type ActorView = {
   root:Phaser.GameObjects.Container;
@@ -76,9 +76,8 @@ class Stage extends Phaser.Scene {
     if(!this.ready)return;
     const {width,height}=this.scale;
     const animate=!playing.paused&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const scale=Math.max(.8,Math.min(width/225,height/109,2.75));
+    const scale=Math.max(.75,Math.min(width/370,height/205,2.2));
     const cues=actorFeedback(frame?.moments??[]);
-    const entrances=frame?.moments.find(moment=>moment.phase==='召唤'&&!moment.source&&!moment.action);
     const project=(position:Point)=>({
       x:14+(width-28)*position.x/COMBAT.width,
       y:25+(height-53)*position.y/COMBAT.height,
@@ -97,11 +96,7 @@ class Stage extends Phaser.Scene {
         continue;
       }
       const {x,y}=project(actor.position);
-      if(!view){
-        const entrance=entrances?.focus.includes(unit.id)&&entrances.state.runtime.actors[unit.id];
-        const start=entrance?project(entrance.position):{x,y};
-        view=this.createActor(unit,start.x,start.y);
-      }
+      if(!view)view=this.createActor(unit,x,y);
       if(view.unit.kind!==unit.kind){
         view.pose=undefined;
         view.sprite.stop().setTexture(unit.kind+'-idle',0);
@@ -126,9 +121,6 @@ class Stage extends Phaser.Scene {
       }else if(!sprite.anims.currentAnim&&!view.pose){
         this.playLocomotion(view,animate);
       }
-    }
-    if(showEffects&&frame?.moments.some(moment=>moment.spell==='recruit')){
-      this.playEffect('recruit',width*.25,height*.46,scale,animate);
     }
   }
 

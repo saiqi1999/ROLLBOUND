@@ -29,15 +29,6 @@ for(const [id,name] of Object.entries(names)){
       PNG.bitblt(src,badge,30,62-height,40,height,0,0);
       await writeFile(path.join(dest,id+'.png'),PNG.sync.write(badge));
     }
-    if(move==='death'){
-      const width=id==='orcRider'?54:40;
-      const badge=new PNG({width,height:36});
-      // The Necromancer dissolves. Use its last recognizable pose before only particles remain.
-      const pose=id==='king'?5:count-1;
-      const left=id==='orcRider'?27:id==='swordsman'?42:id==='lancer'?35:30;
-      PNG.bitblt(src,badge,pose*100+left,28,width,36,0,0);
-      await writeFile(path.join(dest,id+'-corpse.png'),PNG.sync.write(badge));
-    }
   }
 }
 const healFxPath=new URL('../../Assets/Game/Art/Magic(Projectile)/Priest_Heal_effect.png',import.meta.url);
@@ -54,17 +45,13 @@ for(let i=0;i<healFx.data.length;i+=4){
   healFx.data[i+2]=Math.round(blue*.49);
 }
 await writeFile(path.join(dest,'fx-empower.png'),PNG.sync.write(healFx));
-const wizardEffects={surge:'Wizard_Attack01_Effect.png',fireball:'Wizard_Attack02_Effect.png'};
-for(const [kind,file] of Object.entries(wizardEffects)){
-  const bytes=await readFile(new URL('../../Assets/Game/Art/Magic(Projectile)/'+file,import.meta.url));
-  const {width,height}=PNG.sync.read(bytes);
-  if(height!==100||width%100)throw Error('Invalid spell effects sheet: '+file);
-  manifest.fx[kind]=width/100;
-  await writeFile(path.join(dest,'fx-'+kind+'.png'),bytes);
-}
+const fireball=await readFile(new URL('../../Assets/Game/Art/Magic(Projectile)/Wizard_Attack02_Effect.png',import.meta.url));
+const {width,height}=PNG.sync.read(fireball);
+if(height!==100||width%100)throw Error('Invalid fireball effects sheet');
+manifest.fx.fireball=width/100;
+await writeFile(path.join(dest,'fx-fireball.png'),fireball);
 const recruitFx=PNG.sync.read(await readFile(new URL('../../Assets/Game/Art/Magic(Projectile)/Necromancer_Sumon_Effect.png',import.meta.url)));
 if(recruitFx.height!==100||recruitFx.width%100)throw Error('Invalid summoning effect sheet');
-manifest.fx.recruit=recruitFx.width/100;
 for(let i=0;i<recruitFx.data.length;i+=4){
   if(!recruitFx.data[i+3])continue;
   const green=recruitFx.data[i+1];
@@ -72,7 +59,6 @@ for(let i=0;i<recruitFx.data.length;i+=4){
   recruitFx.data[i+1]=Math.round(green*.91);
   recruitFx.data[i+2]=Math.round(recruitFx.data[i+2]*.54);
 }
-await writeFile(path.join(dest,'fx-recruit.png'),PNG.sync.write(recruitFx));
 
 // Match the other spell badges with a 20×20 backdrop and an original frame.
 const recruitBadge=new PNG({width:40,height:36});

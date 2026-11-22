@@ -1,5 +1,5 @@
 import {hasGuardian,units,type Kind} from '../data.ts';
-import type {Side,Unit} from '../engine.ts';
+import type {Side,Unit} from './model.ts';
 import {type Actor,type CombatRuntime,profile} from './model.ts';
 import {approachMotion,distance} from './movement.ts';
 import {pick} from './random.ts';
@@ -52,8 +52,8 @@ export function maxHealth(unit:Unit){
   return units[unit.kind].hp+unit.healthBonus+(unit.battleHealthBonus??0);
 }
 
-export function makeUnit(kind:Kind,side:Side,index:number,bonus:number,healthBonus:number):Unit{
-  return {id:side+'-'+index,kind,side,hp:units[kind].hp+healthBonus,shield:0,bonus,healthBonus,field:false};
+export function makeUnit(id:string,kind:Kind,side:Side,bonus=0,healthBonus=0):Unit{
+  return {id,kind,side,hp:units[kind].hp+healthBonus,shield:0,bonus,healthBonus,field:false};
 }
 
 export function grantBattleStats(unit:Unit,attack:number,health:number){

@@ -1,6 +1,5 @@
-import type {Battle,Moment,step} from './engine.ts';
-import type {SpellKind} from './data.ts';
-import {COMBAT_TICK_MS,DEATH_MS,EFFECT_MS,type WheelMotion} from './timing.ts';
+import type {Battle,BattleWindow,Moment} from './battle/model.ts';
+import {COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
 
 export type PlaybackFrame = {
   state:Battle;
@@ -15,47 +14,29 @@ function closingDuration(moments:Moment[]){
   return COMBAT_TICK_MS;
 }
 
-export function playbackFrames({next,events,ticks,outcome}:ReturnType<typeof step>):PlaybackFrame[]{
-  if(!ticks.length){
-    // A wheel effect can decide a battle before the first combat tick.
-    return events.length?[{state:next,moments:events,until:events.length,duration:closingDuration(events)}]:[];
-  }
+export function playbackFrames({events,ticks,outcome}:BattleWindow):PlaybackFrame[]{
   return ticks.map((tick,index)=>{
-    const moments=events.slice(index===0?0:tick.from,tick.until);
+    const moments=events.slice(tick.from,tick.until);
     const closing=outcome&&index===ticks.length-1;
-    return {state:tick.state,moments,until:tick.until,duration:closing?closingDuration(moments):COMBAT_TICK_MS};
+    return {state:tick.state,moments,until:tick.until,duration:tick.opening?EFFECT_MS:closing?closingDuration(moments):COMBAT_TICK_MS};
   });
-}
-
-export function wheelCues(frame:PlaybackFrame|undefined){
-  const cues:{moment:Moment;motion:WheelMotion}[]=[];
-  for(const moment of frame?.moments??[]){
-    const {phase,spell,action,originRoll,valueTargets,focus}=moment;
-    if(!focus.length)continue;
-    if(spell)cues.push({moment,motion:'cast'});
-    else if(action==='blocked')cues.push({moment,motion:'shake'});
-    else if(phase==='进化'||(phase==='联动'&&originRoll===frame?.state.round)||
-      (valueTargets?.length&&(phase==='召唤'||phase==='阵亡'||phase==='复活')))cues.push({moment,motion:'orbit'});
-  }
-  return cues;
 }
 
 export function frameMessage(frame:PlaybackFrame|undefined){
   const moments=frame?.moments??[];
-  const evolution=moments.find(moment=>moment.phase==='进化');
-  if(evolution)return {phase:evolution.phase,text:evolution.text};
+  const highlight=moments.find(moment=>moment.phase==='补员')??
+    moments.find(moment=>moment.phase==='召唤'||moment.phase==='复活'||moment.phase==='治疗'||moment.phase==='法术');
+  if(highlight)return {phase:highlight.phase,text:highlight.text};
   const attacks=moments.filter(moment=>moment.action==='attack');
   const followUp=attacks.find(moment=>moment.followUp);
   if(followUp)return {phase:'连击',text:followUp.text};
   if(attacks.length>1)return {phase:'攻击',text:attacks.length+' 名单位出手。'};
-  const moment=attacks[0]??moments.find(moment=>moment.spell)??
-    moments.find(moment=>moment.phase!=='移动'&&moment.phase!=='停盘')??moments[0];
-  if(!moment)return frame?{phase:'战斗',text:'单位继续行动。'}:{phase:'备战',text:'双方列阵，准备摇盘。'};
-  const prefix=moment.originRoll!==undefined&&moment.originRoll!==frame?.state.round?'第 '+moment.originRoll+' 摇联动 · ':'';
-  return {phase:moment.phase,text:prefix+moment.text};
+  const moment=attacks[0]??moments.find(moment=>moment.phase!=='移动')??moments[0];
+  if(!moment)return frame?{phase:'战斗',text:'单位继续行动。'}:{phase:'备战',text:'双方列阵。'};
+  return {phase:moment.phase,text:moment.text};
 }
 
-export type ActorEffect = SpellKind|'heal'|'empower';
+export type ActorEffect = 'fireball'|'heal'|'empower';
 export type ActorFeedback = {
   attack?:true;
   heal?:true;
@@ -89,7 +70,6 @@ export function actorFeedback(moments:Moment[]){
       victim.damage+=moment.damage??0;
       continue;
     }
-    if(action==='blocked'||moment.phase==='停盘')continue;
     for(const id of moment.focus)feedback(id).marked=true;
     if(action==='death')for(const id of moment.focus)feedback(id).death=true;
     if(action==='heal'&&source)feedback(source).heal=true;

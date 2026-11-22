@@ -1,6 +1,6 @@
 # ROLLBOUND 轮盘战记
 
-三店三战的单机轮盘构筑原型。支持手机竖屏与桌面浏览器。角色动画来自仓库的 Assets/Game/Art。
+七店七战的单机构筑原型。玩家在商店的 4×4 轮盘发展阵容，再观看自动战斗。支持手机竖屏和桌面浏览器。角色动画来自仓库的 `Assets/Game/Art`。
 
 ## 运行
 
@@ -12,6 +12,8 @@ npm ci
 npm run dev
 ```
 
-同一局域网的手机可通过终端显示的 Network 地址试玩。正式静态文件运行 npm run build 后生成在 dist/。使用 npm test 检查单位联动、随机攻击、阵亡成长以及三场战斗的确定性。
+同一局域网的手机可通过终端显示的 Network 地址试玩。运行 `npm run build` 生成 `dist/`。使用 `npm test` 检查商店结算、战斗补员、阵亡成长和七战流程。
 
-[玩法与工程设计](../docs/网页原型设计方案.md)
+运行 `node scripts/simulate-difficulty.mjs 500` 测算默认每店摇两次的策略。可以加 `--recruit` 比较扩军策略，或加 `--spin` 比较每店摇四次的策略。
+
+[商店轮盘改造方案](../docs/ROLLBOUND-商店轮盘改造方案.md)

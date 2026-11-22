@@ -1,28 +1,139 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {newRun,startBattle,step,commitRoll} from '../src/engine.ts';
-import {makeUnit} from '../src/battle/unit-state.ts';
-import {spawnActor,queueSkill} from '../src/battle/combat.ts';
-import {COMBAT,profile} from '../src/battle/model.ts';
-import {actorFeedback,frameMessage,playbackFrames,wheelCues} from '../src/playback.ts';
+import {advance,commitBattleWindow,newRun,removalMarkers,simulateBattleWindow,startBattle} from '../src/engine.ts';
+import {createBattle} from '../src/battle/resolve.ts';
+import {createEffects} from '../src/battle/effects.ts';
+import {COMBAT,FIELD_LIMIT,profile} from '../src/battle/model.ts';
+import {currentAttack,deployed,maxHealth} from '../src/battle/unit-state.ts';
+import {distance,resolveMovement} from '../src/battle/movement.ts';
+import {actorFeedback,frameMessage,playbackFrames} from '../src/playback.ts';
+import {recruit,resolveSpin} from '../src/shop/rules.ts';
 import {COMBAT_TICK_MS,EFFECT_MS} from '../src/timing.ts';
-import {resolveMovement,distance} from '../src/battle/movement.ts';
 
 function scenario(allies,enemies){
   const run=newRun(365);
-  run.roster=allies.map(([kind])=>kind);
-  startBattle(run);
-  const battle=run.battle;
-  battle.round=1;
-  battle.units=[allies,enemies].flatMap((team,side)=>team.map(([kind,x,y],index)=>{
-    const unit=makeUnit(kind,side,index,0,0);
-    unit.field=true;
-    spawnActor(battle,unit);
-    battle.runtime.actors[unit.id].position={x,y};
-    return unit;
-  }));
+  const recruits=allies.map(([kind])=>recruit(run,kind));
+  run.battle=createBattle({
+    id:'test',seed:365,allies:recruits,enemies:enemies.map(([kind])=>({kind,attack:0,health:0})),
+    preparations:run.shop.preparations,
+  });
+  run.phase='battle';
+  for(const [side,team] of [allies,enemies].entries()){
+    team.forEach(([,x,y],index)=>{
+      const actor=run.battle.runtime.actors[side+'-'+index];
+      if(actor&&x!==undefined)actor.position={x,y};
+    });
+  }
   return run;
 }
+const live=(battle,side)=>battle.units.filter(unit=>unit.side===side&&deployed(unit));
+const fireballs=count=>Array.from({length:count},(_,index)=>({id:'fire-'+index,kind:'fireball'}));
+
+function charge(battle,attacker,target,readyAt=1){
+  Object.assign(battle.runtime.actors[attacker],{phase:'windup',readyAt,targetId:target});
+}
+
+test('twenty recruits randomly deploy sixteen, with four queued and the same reload order',()=>{
+  const run=newRun(87);
+  for(let i=0;i<20;i++)recruit(run,'guard');
+  const saved=JSON.parse(JSON.stringify(run));
+  assert.ok(startBattle(run));
+  assert.ok(startBattle(saved));
+  assert.deepEqual(saved.battle,run.battle);
+  assert.equal(live(run.battle,0).length,FIELD_LIMIT);
+  assert.equal(run.battle.reserves[0].length,4);
+  const reserve=new Set(run.battle.reserves[0]);
+  assert.ok(run.battle.units.filter(unit=>unit.side===0&&!unit.field).every(unit=>reserve.has(unit.id)));
+  assert.notDeepEqual([...reserve],run.roster.slice(16).map(unit=>unit.id));
+});
+
+test('the first two opening deaths release one of four reserves before regular combat starts',()=>{
+  const {battle}=scenario([['guard']],Array.from({length:20},()=>['orc']));
+  const expected=battle.reserves[1][0];
+  battle.openingSpells=fireballs(2);
+  const result=simulateBattleWindow(battle,{tickLimit:0});
+  assert.equal(live(result.next,1).length,15);
+  assert.equal(result.next.reserves[1].length,3);
+  assert.equal(result.next.recruitedDeaths[1],0);
+  assert.deepEqual(result.events.find(event=>event.phase==='补员').focus,[expected]);
+  assert.equal(playbackFrames(result)[0].duration,EFFECT_MS);
+});
+
+test('a summoned skeleton always enters immediately even when the side goes above sixteen',()=>{
+  const {battle}=scenario([['guard']],Array.from({length:18},()=>['armoredSkeleton']));
+  battle.openingSpells=fireballs(1);
+  const result=simulateBattleWindow(battle,{tickLimit:0});
+  assert.equal(live(result.next,1).length,18);
+  assert.equal(live(result.next,1).filter(unit=>unit.temporary).length,3);
+  assert.equal(result.next.reserves[1].length,2);
+  assert.equal(result.next.recruitedDeaths[1],1);
+  assert.ok(result.events.some(event=>event.phase==='召唤'));
+});
+
+test('a temporary skeleton dying does not pay for a reserve or enter the permanent roster',()=>{
+  const run=scenario(Array.from({length:18},()=>['armoredSkeleton']),[['orc']]);
+  const {battle}=run;
+  const enemy=live(battle,1)[0];
+  enemy.bonus=99;
+  const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
+  effects.attack(enemy,live(battle,0)[0]);
+  const skeleton=live(battle,0).find(unit=>unit.temporary);
+  effects.attack(enemy,skeleton);
+  const result=simulateBattleWindow(battle,{tickLimit:1});
+  assert.equal(result.next.recruitedDeaths[0],1);
+  assert.equal(result.next.reserves[0].length,2);
+  assert.equal(result.events.filter(event=>event.phase==='补员').length,0);
+  commitBattleWindow(run,result);
+  assert.equal(run.roster.length,18);
+});
+
+test('opening lethal damage revives a templar and only final deaths count toward reinforcement',()=>{
+  const {battle}=scenario([['guard']],Array.from({length:18},()=>['templar']));
+  battle.openingSpells=fireballs(1);
+  const {next,events}=simulateBattleWindow(battle,{tickLimit:0});
+  const revived=live(next,1).find(unit=>unit.revived);
+  assert.equal(revived.hp,maxHealth(revived));
+  assert.equal(live(next,1).length,16);
+  assert.equal(next.recruitedDeaths[1],0);
+  assert.equal(next.reserves[1].length,2);
+  assert.ok(events.some(event=>event.phase==='复活'));
+});
+
+test('an armored skeleton on the last tile summons before the loss check',()=>{
+  const {battle}=scenario([['guard']],[['armoredSkeleton']]);
+  battle.openingSpells=fireballs(1);
+  const result=simulateBattleWindow(battle,{tickLimit:0});
+  assert.equal(result.outcome,undefined);
+  assert.equal(live(result.next,1).length,3);
+});
+
+test('opened spells can end a fight before the first combat tick and replay their effect',()=>{
+  const run=scenario([['guard']],[['orc']]);
+  run.battle.openingSpells=fireballs(1);
+  const window=simulateBattleWindow(run.battle);
+  assert.equal(window.outcome,'胜利');
+  assert.equal(window.next.runtime.tick,0);
+  const [frame]=playbackFrames(window);
+  assert.equal(window.ticks.length,1);
+  assert.equal(frame.duration,EFFECT_MS);
+  const defeated=actorFeedback(frame.moments).get('1-0');
+  assert.equal(defeated.death,true);
+  assert.equal(defeated.hit,true);
+  assert.ok(commitBattleWindow(run,window));
+  assert.equal(commitBattleWindow(run,window),false);
+  assert.deepEqual(run.results,['胜利']);
+  assert.deepEqual(window,simulateBattleWindow(run.history[0],{tickLimit:0}));
+});
+
+test('battle windows produce the same state with effects or fast-forwarded frames',()=>{
+  const {battle}=scenario([['guard'],['archer'],['orc']],[['orc'],['guard']]);
+  const ordinary=simulateBattleWindow(battle);
+  const fast=simulateBattleWindow(JSON.parse(JSON.stringify(battle)),{captureEvents:false});
+  assert.deepEqual(fast.next,ordinary.next);
+  assert.equal(fast.outcome,ordinary.outcome);
+  assert.equal(fast.ticks.length,0);
+  assert.ok(ordinary.ticks.length);
+});
 
 test('both sides move from the same snapshot without passing through each other',()=>{
   const p=[{x:300,y:300},{x:420,y:300}];
@@ -34,215 +145,105 @@ test('both sides move from the same snapshot without passing through each other'
   assert.deepEqual(p,[{x:300,y:300},{x:420,y:300}]);
 });
 
-test('the deployed fighter outside the current wheel still attacks in range',()=>{
-  const {battle}=scenario(Array.from({length:9},(_,i)=>['guard',200,82+i*62]).concat([['archer',445,270]]),[['orc',554,270]]);
-  // One of the nine other pieces is already a corpse and reserves a draw slot.
-  battle.units[0].hp=0;
-  battle.units[0].field=false;
-  battle.runtime.actors['0-0'].phase='dead';
-  for(let seed=0;seed<50;seed++){
-    battle.rng=Math.imul(seed,0x9e3779b1)>>>0;
-    const {next,events}=step(battle);
-    if(next.boards[0].includes('0-9'))continue;
-    const hit=events.find(e=>e.action==='attack'&&e.source==='0-9');
-    assert.equal(hit?.target,'1-0');
-    assert.equal(hit.value,'−3');
-    return;
-  }
-  assert.fail('no sample where a deployed unit missed the draw');
+test('a lethal hit interrupts a queued strike, and the dead fighter is ignored by later hits',()=>{
+  const {battle}=scenario([['orc',430,310],['archer',400,220]],[['guard',520,310]]);
+  battle.units[2].hp=2;
+  charge(battle,'0-0','1-0',2);
+  charge(battle,'0-1','1-0',2);
+  charge(battle,'1-0','0-0',2);
+  const {next,events,outcome}=simulateBattleWindow(battle);
+  assert.equal(outcome,'胜利');
+  assert.equal(next.units[2].hp,0);
+  assert.deepEqual(events.filter(event=>event.action==='attack').map(event=>event.source),['0-0']);
 });
 
-test('a queued link retains its original neighbors and order across wheel rolls and reload',()=>{
-  const run=scenario([['archer',315,125],['guard',367,300],['lancer',310,452]], [['orc',670,335]]);
-  const battle=run.battle;
-  const [archer]=battle.units;
-  const actor=battle.runtime.actors[archer.id];
-  actor.phase='recover';
-  actor.readyAt=COMBAT.ticksPerRoll+2;
-  queueSkill(battle,archer,['0-1']);
-  const first=step(battle);
-  assert.equal(first.events.some(e=>e.phase==='联动'),false);
-  assert.ok(first.events.some(e=>e.phase==='移动')); // A separate unit continues its normal pursuit.
-  assert.equal(first.next.runtime.actors[archer.id].queue[0].originRoll,1);
-  commitRoll(run,first);
-  const loaded=JSON.parse(JSON.stringify(run));
-  const result=step(loaded.battle);
-  assert.deepEqual(step(run.battle),result);
-  assert.deepEqual(step(loaded.battle,{captureEvents:false}).next,result.next);
-  const links=result.events.filter(e=>e.phase==='联动');
-  assert.equal(links[0].source,archer.id);
-  assert.equal(links[0].originRoll,1);
-  assert.deepEqual(links[0].focus,['0-0','0-1']);
-  assert.deepEqual(links.map(e=>e.originRoll),links.map(e=>e.originRoll).sort((a,b)=>a-b));
-  assert.ok(links.some(e=>e.originRoll===2));
-});
-
-test('a waiting link is dropped if its original neighbor dies and a later hit cannot target the corpse',()=>{
-  const {battle}=scenario([['archer',375,130],['guard',470,300]], [['orc',560,300]]);
-  const [archer,guard,orc]=battle.units;
-  guard.hp=1;
-  const archerActor=battle.runtime.actors[archer.id];
-  archerActor.phase='recover';
-  archerActor.readyAt=3;
-  Object.assign(battle.runtime.actors[orc.id],{phase:'windup',readyAt:1,targetId:guard.id});
-  queueSkill(battle,archer,[guard.id]);
-  const {next,events}=step(battle);
-  assert.equal(next.units[0].bonus,0);
-  assert.equal(next.units[1].hp,0);
-  assert.equal(events.filter(e=>e.action==='attack'&&e.target===guard.id).length,1);
-  assert.ok(!events.some(e=>e.phase==='联动'&&e.source===archer.id));
-});
-
-test('ranged attacks leave enough space for fighters to move without overlapping',()=>{
-  const {battle}=scenario([['bone',340,320],['orc',273,320]], [['guard',570,322]]);
-  const [bone,,guard]=battle.units;
-  guard.hp=160;
-  const first=step(battle);
-  const hit=first.events.find(e=>e.action==='attack'&&e.source===bone.id);
-  assert.equal(hit?.value,'−2');
-  const guardActor=battle.runtime.actors[guard.id];
-  const approaching=battle.runtime.actors['0-1'];
-  assert.ok(distance(guardActor.position,approaching.position)>profile('orc').range);
-  for(const event of first.events.filter(e=>e.phase==='移动')){
-    const positions=Object.values(event.state.runtime.actors).map(actor=>actor.position);
+test('ranged fighters leave enough space for other fighters to pass',()=>{
+  const {battle}=scenario([['bone',340,320],['orc',273,320]],[['guard',570,322]]);
+  battle.units[2].hp=160;
+  for(const tick of simulateBattleWindow(battle).ticks){
+    const positions=Object.values(tick.state.runtime.actors).map(actor=>actor.position);
     for(let i=0;i<positions.length;i++)for(const other of positions.slice(i+1)){
       assert.ok(distance(positions[i],other)>=COMBAT.separation-1e-6);
     }
   }
+  assert.ok(distance(battle.runtime.actors['0-1'].position,battle.runtime.actors['1-0'].position)>profile('orc').range);
 });
 
-test('wheel, targeting and effect random streams are independent',()=>{
-  const {battle}=scenario([['guard',120,100],['archer',120,200]], [['orc',800,150],['orc',800,330]]);
-  const alternate=structuredClone(battle);
-  alternate.runtime.rng=2**29;
-  alternate.runtime.effectRandom.rng=0xffffffff;
-  const base=step(battle),changed=step(alternate);
-  assert.deepEqual(base.events[0].state.boards,changed.events[0].state.boards);
-  assert.equal(base.next.rng,changed.next.rng);
-});
-
-test('a rider’s extra strike retargets a live enemy and uses the permanent gain from its first kill',()=>{
+test('rider extra attacks find a live enemy and use the earlier permanent kill growth',()=>{
   const run=scenario([['orcRider',450,310]],[['page',550,310],['orc',468,410]]);
-  const {battle}=run;
-  const [rider,skeleton,orc]=battle.units;
-  Object.assign(battle.runtime.actors[rider.id],{phase:'windup',readyAt:1,targetId:skeleton.id});
-  const result=step(battle,{tickLimit:1});
-  const attacks=result.events.filter(event=>event.action==='attack'&&event.source===rider.id);
-  assert.deepEqual(attacks.map(event=>[event.target,event.damage,event.followUp]),[
-    [skeleton.id,3,undefined],
-    [orc.id,4,true],
-  ]);
-  assert.equal(result.next.units.find(unit=>unit.id===orc.id).hp,6);
-  assert.equal(frameMessage(playbackFrames(result)[0]).phase,'连击');
-  commitRoll(run,result);
-  assert.equal(run.attackGrowth[rider.id],1);
-  assert.equal(run.healthGrowth[rider.id],1);
+  charge(run.battle,'0-0','1-0');
+  const window=simulateBattleWindow(run.battle,{tickLimit:1});
+  assert.deepEqual(window.events.filter(event=>event.action==='attack').map(event=>
+    [event.target,event.damage,event.followUp]),[['1-0',3,undefined],['1-1',4,true]]);
+  assert.equal(window.next.units.find(unit=>unit.id==='1-1').hp,6);
+  assert.equal(frameMessage(playbackFrames(window)[0]).phase,'连击');
+  assert.ok(commitBattleWindow(run,window));
+  while(run.phase==='battle')commitBattleWindow(run,simulateBattleWindow(run.battle,{captureEvents:false}));
+  assert.ok(run.roster[0].gainedAttack>=1);
+  assert.equal(run.roster[0].gainedAttack,run.roster[0].gainedHealth);
 });
 
-
-test('independent strikes and movement share one fixed playback beat',()=>{
+test('simultaneous strikes and movement share one fixed playback beat',()=>{
   const {battle}=scenario([
     ['archer',385,210],['archer',400,280],['guard',255,529],
   ],[
     ['guard',493,302],['bone',484,160],['orc',780,522],
   ]);
-  const actors=battle.runtime.actors;
-  Object.assign(actors['0-0'],{phase:'windup',readyAt:1,targetId:'1-0'});
-  Object.assign(actors['0-1'],{phase:'windup',readyAt:1,targetId:'1-0'});
-  Object.assign(actors['1-1'],{phase:'windup',readyAt:1,targetId:'0-0'});
-  const result=step(battle);
-  const frames=playbackFrames(result);
-  const frame=frames[0];
-  const attacks=frame.moments.filter(m=>m.action==='attack');
-  assert.deepEqual(attacks.map(hit=>hit.source),['1-1','0-0','0-1']);
-  assert.ok(frame.moments.some(m=>m.phase==='移动'));
-  assert.ok(frame.state.runtime.actors['0-2'].position.x>actors['0-2'].position.x);
+  charge(battle,'0-0','1-0');
+  charge(battle,'0-1','1-0');
+  charge(battle,'1-1','0-0');
+  const result=simulateBattleWindow(battle);
+  const frames=playbackFrames(result),frame=frames[0];
+  assert.deepEqual(frame.moments.filter(event=>event.action==='attack').map(event=>event.source),['1-1','0-0','0-1']);
+  assert.ok(frame.moments.some(event=>event.phase==='移动'));
   assert.equal(frame.duration,COMBAT_TICK_MS);
   assert.deepEqual(frameMessage(frame),{phase:'攻击',text:'3 名单位出手。'});
-  const cues=actorFeedback(frame.moments);
-  for(const hit of attacks)assert.equal(cues.get(hit.source).attack,true);
-  assert.equal(cues.get('1-0').damage,6);
-  assert.equal(cues.get('0-0').damage,2);
+  assert.equal(actorFeedback(frame.moments).get('1-0').damage,6);
   assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
-  assert.deepEqual(frames,playbackFrames(step(JSON.parse(JSON.stringify(battle)))));
 });
 
-test('quiet combat ticks keep their cadence without adding playback time per action',()=>{
-  const {battle}=scenario([['guard',480,320]],[['orc',568,320]]);
-  const frames=playbackFrames(step(battle));
-  assert.equal(frames.length,COMBAT.ticksPerRoll);
-  assert.ok(frames.some(frame=>frame.moments.length===0));
-  assert.deepEqual(frames.map(frame=>frame.state.runtime.tick),Array.from({length:COMBAT.ticksPerRoll},(_,i)=>i+1));
-  assert.ok(frames.every(frame=>frame.duration===COMBAT_TICK_MS));
+test('the prepared physician heals a living target once and cannot heal a slain target',()=>{
+  const {battle}=scenario([['medic',430,230],['guard',430,310]],[['orc',520,310]]);
+  battle.medicTargets['0-0']='0-1';
+  battle.units[1].hp=8;
+  charge(battle,'1-0','0-1');
+  const next=simulateBattleWindow(battle,{tickLimit:1});
+  assert.equal(next.next.units[1].hp,maxHealth(next.next.units[1]));
+  assert.ok(next.events.some(event=>event.action==='heal'&&event.target==='0-1'));
+  assert.equal(next.next.medicTargets['0-0'],undefined);
+  battle.units[1].hp=1;
+  const dead=simulateBattleWindow(battle,{tickLimit:1});
+  assert.ok(dead.events.some(event=>event.action==='death'&&event.focus.includes('0-1')));
+  assert.ok(!dead.events.some(event=>event.action==='heal'));
 });
 
+test('undead archers stack combat attack on each final friendly undead death',()=>{
+  const {battle}=scenario([['bone',395,210],['page',430,310],['page',430,385]],[['orc',520,310]]);
+  const enemy=battle.units.at(-1);
+  const effects=createEffects(battle,new Map(battle.units.map(unit=>[unit.id,unit])),()=>{});
+  effects.attack(enemy,battle.units[1]);
+  effects.attack(enemy,battle.units[2]);
+  assert.equal(currentAttack(battle.units[0]),8);
+  assert.equal(battle.units.length,4);
+});
 
-test('rolls with deployments and spells use the same uninterrupted combat cadence',()=>{
-  const run=newRun(22);
-  run.roster=['guard','guard','soldier','wizard','medic'];
-  run.spells=['surge','recruit'];
-  startBattle(run);
-  for(const unit of run.battle.units)unit.shield=100;
-  for(let i=0;i<2;i++){
-    const battle=run.battle,result=step(battle);
-    const frames=playbackFrames(result);
-    const first=frames[0];
-    assert.equal(first.state.runtime.tick,battle.runtime.tick+1);
-    assert.ok(first.moments.some(moment=>moment.phase==='停盘'));
-    assert.ok(first.moments.some(moment=>moment.phase==='移动'));
-    assert.equal(frames.length,10);
-    assert.equal(result.outcome,undefined);
-    assert.equal(frames.reduce((ms,frame)=>ms+frame.duration,0),result.ticks.length*COMBAT_TICK_MS);
-    assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
-    assert.deepEqual(frames.at(-1).state,result.next);
-    if(i===0){
-      assert.ok(first.moments.some(moment=>moment.phase==='召唤'));
-      const motions=wheelCues(first).map(cue=>cue.motion);
-      assert.ok(wheelCues(first).every(cue=>cue.moment.phase!=='停盘'));
-      assert.equal(motions.filter(motion=>motion==='cast').length,2);
-      assert.ok(motions.includes('orbit'));
+test('the adventure can progress seven times with one grant per shop and three even-win removal marks',()=>{
+  const run=newRun(5);
+  for(let index=0;index<6;index++)recruit(run,'archer',50,200);
+  for(let stage=0;stage<7;stage++){
+    assert.equal(run.stage,stage);
+    assert.equal(run.shop.paidSpins,0);
+    assert.ok(resolveSpin(run));
+    assert.ok(startBattle(run));
+    while(run.phase==='battle')commitBattleWindow(run,simulateBattleWindow(run.battle,{captureEvents:false}));
+    assert.equal(run.results.at(-1),'胜利');
+    const prior=run.gold;
+    advance(run);
+    if(stage<6){
+      assert.equal(run.phase,'shop');
+      assert.equal(run.gold-prior,[8,10,12,14,16,18][stage]);
     }
-    commitRoll(run,result);
   }
-});
-
-test('a wheel spell that ends the battle yields one terminal frame with its original cue',()=>{
-  const {battle}=scenario([['guard',200,320]],[['orc',800,320]]);
-  battle.spells=[{id:'spell-0',kind:'fireball'}];
-  const result=step(battle);
-  assert.equal(result.outcome,'胜利');
-  assert.equal(result.ticks.length,0);
-  const [frame]=playbackFrames(result);
-  assert.equal(playbackFrames(result).length,1);
-  assert.deepEqual(frame.state,result.next);
-  assert.deepEqual(frame.moments,result.events);
-  assert.equal(frame.duration,EFFECT_MS);
-  const cast=wheelCues(frame).find(cue=>cue.motion==='cast');
-  assert.ok(cast.moment.state.boards[0].includes('spell-0'));
-  assert.ok(!frame.state.boards[0].includes('spell-0'));
-  const defeated=actorFeedback(frame.moments).get('1-0');
-  assert.equal(defeated.hit,true);
-  assert.equal(defeated.death,true);
-});
-
-
-test('a wheel draw without any skills leaves occupied tiles unlit',()=>{
-  const {battle}=scenario([['guard',200,320]],[['orc',800,320]]);
-  const [frame]=playbackFrames(step(battle));
-  const draw=frame.moments.find(moment=>moment.phase==='停盘');
-  assert.deepEqual(draw.focus,['0-0','1-0']);
-  assert.deepEqual(wheelCues(frame),[]);
-  assert.equal(actorFeedback(frame.moments).size,0);
-});
-
-test('replay can use the recorded roll length across cadence changes',()=>{
-  const run=scenario([['guard',300,320]],[['orc',700,320]]);
-  const earlier=step(run.battle,{tickLimit:6});
-  commitRoll(run,earlier);
-  const restored=JSON.parse(JSON.stringify(run));
-  const checkpoint=restored.history[0];
-  const ticks=restored.battle.runtime.tick-checkpoint.runtime.tick;
-  assert.equal(ticks,6);
-  assert.deepEqual(step(checkpoint,{tickLimit:ticks}),earlier);
-  assert.equal(playbackFrames(step(checkpoint)).length,10);
+  assert.equal(run.phase,'end');
+  assert.equal(removalMarkers(run),3);
 });

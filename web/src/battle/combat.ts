@@ -1,5 +1,4 @@
-import type {Battle,Unit} from '../engine.ts';
-import {COMBAT,profile,type Point,type WheelSkill} from './model.ts';
+import {COMBAT,profile,type Battle,type Point,type Unit} from './model.ts';
 import {distance,resolveMovement} from './movement.ts';
 import {canAct,chooseTarget,deployed,planMotion,recover,turnTowards,withinRange,type Fighter} from './unit-state.ts';
 
@@ -7,6 +6,8 @@ const homeSlots:Point[]=[
   {x:204,y:307},{x:251,y:429},{x:255,y:179},
   {x:132,y:390},{x:143,y:230},{x:199,y:517},
   {x:195,y:108},{x:88,y:499},{x:92,y:127},
+  {x:321,y:243},{x:314,y:373},{x:319,y:497},
+  {x:320,y:112},{x:107,y:578},{x:247,y:583},{x:111,y:58},
 ];
 
 export function spawnActor(battle:Battle,unit:Unit){
@@ -15,22 +16,24 @@ export function spawnActor(battle:Battle,unit:Unit){
   const free=(point:Point)=>occupied.every(other=>distance(point,other)>=COMBAT.separation);
   const positions=homeSlots.map(({x,y})=>({x:unit.side?COMBAT.width-x:x,y}));
   let position=positions.find(free);
-  // A moving fighter can occupy a spawn position. The arena has room for fallback
-  // positions even when both sides deploy their full nine units at once.
-  for(let x=COMBAT.separation;!position&&x<COMBAT.width;x+=COMBAT.separation){
-    for(let y=COMBAT.separation;!position&&y<COMBAT.height;y+=COMBAT.separation){
-      const candidate={x:unit.side?COMBAT.width-x:x,y};
-      if(free(candidate))position=candidate;
+  if(!position){
+    let widest=0;
+    position=positions[0];
+    // Even if the home side is crowded, summons are placed in the widest gap.
+    for(let x=COMBAT.separation;x<COMBAT.width/2;x+=COMBAT.separation){
+      for(let y=COMBAT.separation;y<COMBAT.height;y+=COMBAT.separation){
+        const candidate={x:unit.side?COMBAT.width-x:x,y};
+        const clearance=occupied.reduce((nearest,other)=>Math.min(nearest,distance(candidate,other)),Infinity);
+        if(clearance>widest){widest=clearance;position=candidate;}
+      }
     }
   }
-  if(!position)throw new Error('No room to deploy '+unit.id);
-  clock.actors[unit.id]={position,facing:unit.side?-1:1,phase:'ready',readyAt:clock.tick,queue:[]};
+  clock.actors[unit.id]={position,facing:unit.side?-1:1,phase:'ready',readyAt:clock.tick};
 }
 
 export function interruptActor(battle:Battle,unit:Unit){
   const clock=battle.runtime, actor=clock?.actors[unit.id];
   if(!actor||!clock)return;
-  actor.queue=[];
   actor.targetId=undefined;
   actor.phase='dead';
 }
@@ -40,13 +43,7 @@ export function reviveActor(battle:Battle,unit:Unit){
   if(actor&&clock)recover(actor,clock.tick+1);
 }
 
-export function queueSkill(battle:Battle,unit:Unit,neighbors:(string|null)[]){
-  const clock=battle.runtime;
-  clock.actors[unit.id].queue.push({sequence:clock.nextSkill++,originRoll:battle.round,neighbors});
-}
-
 type CombatEffects = {
-  skill:(unit:Unit,order:WheelSkill)=>boolean;
   motion:()=>void;
   attack:(attacker:Unit,target:Unit,followUp?:true)=>void;
 };
@@ -61,22 +58,11 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
     if(actor.phase==='windup'&&(!actor.targetId||!byId.has(actor.targetId)))actor.phase='ready';
   }
 
-  // Resolve the head of the shared wheel order at its own unit's safe action point.
-  const queued=fighters.filter(({actor})=>actor.queue.length);
-  while(queued.length){
-    queued.sort((a,b)=>a.actor.queue[0].sequence-b.actor.queue[0].sequence);
-    const {unit,actor}=queued[0];
-    if(!canAct(actor))break;
-    const order=actor.queue.shift()!;
-    if(effects.skill(unit,order))recover(actor,tick+1);
-    if(!actor.queue.length)queued.shift();
-  }
-
   const snapshot=fighters.map(({actor})=>actor.position);
   const aim=new Map<Fighter,Fighter>();
   const intents=fighters.map(fighter=>{
     const {actor}=fighter;
-    if(!canAct(actor)||actor.queue.length)return {x:0,y:0};
+    if(!canAct(actor))return {x:0,y:0};
     const target=chooseTarget(fighter,fighters,clock);
     actor.targetId=target?.unit.id;
     if(!target){actor.phase='ready';return {x:0,y:0};}
