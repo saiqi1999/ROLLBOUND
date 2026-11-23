@@ -4,7 +4,9 @@ import path from 'node:path';
 import {PNG} from 'pngjs';
 const root=fileURLToPath(new URL('../../Assets/Game/Art/Characters(100x100 split)/',import.meta.url));
 const dest=fileURLToPath(new URL('../public/art/',import.meta.url));
+const bundled=fileURLToPath(new URL('../.generated/',import.meta.url));
 await mkdir(dest,{recursive:true});
+await mkdir(bundled,{recursive:true});
 const names={
   guard:'Knight',archer:'Archer',medic:'Priest',king:'Necromancer',page:'Skeleton',orc:'Orc',bone:'Skeleton Archer',
   soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
@@ -12,6 +14,12 @@ const names={
   greatswordSkeleton:'Greatsword Skeleton',eliteOrc:'Elite Orc',werebear:'Werebear',werewolf:'Werewolf',
 };
 const manifest={};
+const battleSheets={};
+async function writeBattleSheet(key,bytes){
+  battleSheets[key]=bytes.toString('base64');
+  await writeFile(path.join(dest,key+'.png'),bytes);
+}
+
 for(const [id,name] of Object.entries(names)){
   manifest[id]={};
   const idle=id==='bat'?'Flying':'Idle';
@@ -22,7 +30,7 @@ for(const [id,name] of Object.entries(names)){
     const count=src.width/100, frame=80;
     const sheet=new PNG({width:frame*count,height:64});
     for(let i=0;i<count;i++)PNG.bitblt(src,sheet,100*i+10,6,80,64,i*frame,0);
-    await writeFile(path.join(dest,id+'-'+move+'.png'),PNG.sync.write(sheet));
+    await writeBattleSheet(id+'-'+move,PNG.sync.write(sheet));
     manifest[id][move]=count;
     if(move==='idle'){
       const height=id==='lancer'?44:36;
@@ -45,12 +53,12 @@ for(let i=0;i<healFx.data.length;i+=4){
   healFx.data[i+1]=Math.round(red*.48);
   healFx.data[i+2]=Math.round(blue*.49);
 }
-await writeFile(path.join(dest,'fx-empower.png'),PNG.sync.write(healFx));
+await writeBattleSheet('fx-empower',PNG.sync.write(healFx));
 const fireball=await readFile(new URL('../../Assets/Game/Art/Magic(Projectile)/Wizard_Attack02_Effect.png',import.meta.url));
 const {width,height}=PNG.sync.read(fireball);
 if(height!==100||width%100)throw Error('Invalid fireball effects sheet');
 manifest.fx.fireball=width/100;
-await writeFile(path.join(dest,'fx-fireball.png'),fireball);
+await writeBattleSheet('fx-fireball',fireball);
 const recruitFx=PNG.sync.read(await readFile(new URL('../../Assets/Game/Art/Magic(Projectile)/Necromancer_Sumon_Effect.png',import.meta.url)));
 if(recruitFx.height!==100||recruitFx.width%100)throw Error('Invalid summoning effect sheet');
 for(let i=0;i<recruitFx.data.length;i+=4){
@@ -77,3 +85,4 @@ for(let y=0;y<7;y++){
 }
 await writeFile(path.join(dest,'spell-recruit.png'),PNG.sync.write(recruitBadge));
 await writeFile(path.join(dest,'frames.json'),JSON.stringify(manifest));
+await writeFile(path.join(bundled,'arena-sprites.ts'),'export const arenaSprites: Record<string,string> = '+JSON.stringify(battleSheets)+';\n');

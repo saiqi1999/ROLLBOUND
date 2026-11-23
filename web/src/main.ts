@@ -406,6 +406,7 @@ document.addEventListener('visibilitychange',()=>{
 
 window.addEventListener('online',()=>void flushLineupLogs());
 render();
+if(run.phase==='shop')void import('./arena.ts').catch(()=>{/* Battle startup can still use its fallback. */});
 if(!loaded)save();
 else queueLineup(run);
 void flushLineupLogs();

@@ -1,11 +1,11 @@
 import Phaser from 'phaser';
-import {ARENA_ART_WAIT_MS,ATTACK_MS,COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
+import {ATTACK_MS,COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
+import {decodeArenaSprite} from './arena-art.ts';
 import {actorFeedback,type ActorFeedback,type ActorEffect,type PlaybackFrame} from './playback.ts';
 import {COMBAT,type Point} from './battle/model.ts';
 import {clearHitFlash,flashHit} from './hit-flash.ts';
 import {units,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Unit} from './engine.ts';
-const base=import.meta.env.BASE_URL+'art/';
 const actions=['idle','walk','attack','death'] as const;
 const effectStills={empower:1,fireball:0} as const;
 const missingSprite=['ally-marker','enemy-marker'] as const;
@@ -42,15 +42,6 @@ class Stage extends Phaser.Scene {
     this.onReady=onReady;
   }
 
-  preload(){
-    const xhrSettings:Phaser.Types.Loader.XHRSettingsObject={responseType:'blob',timeout:ARENA_ART_WAIT_MS};
-    for(const kind of this.kinds)for(const move of actions){
-      this.load.spritesheet(kind+'-'+move,base+kind+'-'+move+'.png',spriteFrame,xhrSettings);
-    }
-    for(const fx of Object.keys(effectStills)){
-      this.load.spritesheet('fx-'+fx,base+'fx-'+fx+'.png',{frameWidth:100,frameHeight:100},xhrSettings);
-    }
-  }
   create(){
     const marker=this.make.graphics({x:0,y:0},false);
     for(const side of [0,1] as const){
@@ -60,23 +51,38 @@ class Stage extends Phaser.Scene {
       marker.generateTexture(missingSprite[side],spriteFrame.frameWidth,spriteFrame.frameHeight);
     }
     marker.destroy();
-    for(const kind of this.kinds)for(const move of actions){
-      const key=kind+'-'+move;
-      if(!this.textures.exists(key))continue;
-      const frames=this.anims.generateFrameNumbers(key);
-      if(frames.length)this.anims.create({key,frames,frameRate:move==='idle'?7:move==='walk'?12:16,repeat:move==='idle'||move==='walk'?-1:0});
-    }
-    for(const fx of Object.keys(effectStills)){
-      const key='fx-'+fx;
-      if(!this.textures.exists(key))continue;
-      const frames=this.anims.generateFrameNumbers(key);
-      if(frames.length)this.anims.create({key,frames,duration:EFFECT_MS,repeat:0});
-    }
     this.ready=true;
     this.scale.on('resize',()=>{if(latest)this.paint(latest.battle,latest.frame,true,false);});
-    if(latest)this.paint(latest.battle,latest.frame,true);
     this.playback();
+    void this.loadArt();
+  }
+
+  private async loadArt(){
+    const actors=[...this.kinds].flatMap(kind=>actions.map(move=>this.addAnimation(kind+'-'+move,spriteFrame,{
+      frameRate:move==='idle'?7:move==='walk'?12:16,
+      repeat:move==='idle'||move==='walk'?-1:0,
+    })));
+    const effects=Object.keys(effectStills).map(fx=>this.addAnimation('fx-'+fx,{frameWidth:100,frameHeight:100},{
+      duration:EFFECT_MS,repeat:0,
+    }));
+    await Promise.all([...actors,...effects]);
+    if(scene!==this)return;
+    if(latest)this.paint(latest.battle,latest.frame,true,false);
     this.onReady();
+  }
+
+  private async addAnimation(key:string,size:Phaser.Types.Textures.SpriteSheetConfig,options:Pick<Phaser.Types.Animations.Animation,'frameRate'|'duration'|'repeat'>){
+    try{
+      const canvas=await decodeArenaSprite(key);
+      if(scene!==this)return;
+      const texture=this.textures.addCanvas(key,canvas);
+      if(!texture)return;
+      this.textures.addSpriteSheet(key,texture,size);
+      const frames=this.anims.generateFrameNumbers(key);
+      if(frames.length)this.anims.create({key,frames,...options});
+    }catch(error){
+      if(scene===this)console.warn('Unable to decode battle sprite',key,error);
+    }
   }
 
   playback(){
