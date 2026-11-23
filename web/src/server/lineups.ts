@@ -100,7 +100,10 @@ function exportLineups(db:Database){
 }
 
 export async function handleLineups(request:Request,env:LineupEnv):Promise<Response>{
-  if(!request.headers.get('oai-authenticated-user-id'))return new Response('Sign-in required',{status:401});
+  // The Sites gateway can identify a signed-in mobile visitor by email alone.
+  const identity=request.headers.get('oai-authenticated-user-id')?.trim()||
+    request.headers.get('oai-authenticated-user-email')?.trim();
+  if(!identity)return new Response('Sign-in required',{status:401});
   const db=env.DB;
   if(!db)return new Response('Lineup database unavailable',{status:503});
   if(request.method==='GET')return exportLineups(db);

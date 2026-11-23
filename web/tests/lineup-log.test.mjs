@@ -103,6 +103,20 @@ test('the server requires its site identity and only accepts same-origin structu
   assert.deepEqual(await exportRows(env),[]);
 });
 
+test('a signed-in mobile session can submit and export with the site-provided email alone',async t=>{
+  const env=database(t);
+  const run=newRun(42);
+  recruit(run,'guard');
+  startLoggedBattle(run);
+  const record=captureLineup(run);
+  const headers={'oai-authenticated-user-email':'playtester@example.test',origin,'content-type':'application/json'};
+  const submitted=await handleLineups(new Request(endpoint,{method:'POST',headers,body:JSON.stringify(record)}),env);
+  assert.equal(submitted.status,204);
+  const exported=await handleLineups(new Request(endpoint,{headers}),env);
+  assert.equal(exported.status,200);
+  assert.deepEqual(JSON.parse(await exported.text()),record);
+});
+
 test('export streams all rows across query pages',async t=>{
   const env=database(t);
   const run=newRun(21);
