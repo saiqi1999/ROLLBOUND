@@ -1,6 +1,7 @@
 import {encounters,hasGuardian,races,units,type Kind,type SpellKind} from '../data.ts';
 import type {Run} from '../engine.ts';
 import {magicTags,type TagId} from '../magic-tags.ts';
+import {lineupLogging} from '../lineup-client.ts';
 
 const base=import.meta.env.BASE_URL;
 export const heart='♥';
@@ -11,6 +12,8 @@ export const spellArt=(kind:SpellKind,cls='')=>'<img class="sprite '+cls+'" src=
 export const tagArt=(tag:TagId,cls='')=>'<img class="tag-icon '+cls+'" src="'+base+'tags/'+tag+'.png" alt="">';
 export const tagBadge=(tag:TagId)=>'<span class="tag-badge" title="'+magicTags[tag].name+'">'+
   tagArt(tag)+'<span class="sr-only">'+magicTags[tag].name+'标签</span></span>';
+export const lineupExport=lineupLogging?
+  '<a class="lineup-export" href="./api/battle-lineups" download>导出阵容日志</a>':'';
 
 export function unitTags(kind:Kind,temporary=false){
   return '<span class="unit-tags">'+races[units[kind].race]+(hasGuardian(kind)?' · 守护':'')+

@@ -5,7 +5,7 @@ import {GROWTH_TAG_GAIN,magicTags,tagCount,type AppliedTag} from '../magic-tags.
 import {scenery} from '../landscape.ts';
 import {unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
 import {canSpin,spinCost} from '../shop/rules.ts';
-import {art,coin,header,heart,spellArt,tagArt,tagBadge,unitTags} from './common.ts';
+import {art,coin,header,heart,lineupExport,spellArt,tagArt,tagBadge,unitTags} from './common.ts';
 import {renderReels} from './reels.ts';
 
 export type ShopPane='wheel'|'shelf';
@@ -96,7 +96,7 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   const growing=run.roster.filter(unit=>unit.tag==='growth').length;
   root.querySelector('#departure-growth')!.textContent=growing?
     growing+' 名单位开战前永久 +'+GROWTH_TAG_GAIN+'/+'+GROWTH_TAG_GAIN:'';
-  root.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+count+' 名</small></h3>'+
+  root.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+count+' 名</small></h3>'+lineupExport+
     (count?'<div class="roster">'+alliedRoster(run)+'</div>':'<p class="muted">从货架招募单位。</p>')+spellInventory(run);
 
   const symbols=count+recruitsWaiting+run.spells.length;

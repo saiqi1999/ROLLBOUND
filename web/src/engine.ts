@@ -13,6 +13,7 @@ export {simulateBattleWindow} from './battle/resolve.ts';
 
 export type Run = {
   version:6;seed:number;stage:number;gold:number;nextId:number;
+  lineupRunId?:string;
   roster:UnitInstance[];pendingRecruits:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;tagInventory:TagInventory;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
   results:Outcome[];log:string[];history:Battle[];

@@ -6,7 +6,7 @@ import type {Battle} from '../battle/model.ts';
 import {scenery} from '../landscape.ts';
 import {frameMessage,type PlaybackFrame} from '../playback.ts';
 import {COMBAT_TICK_MS} from '../timing.ts';
-import {art,header} from './common.ts';
+import {art,header,lineupExport} from './common.ts';
 
 function seconds(battle:Battle){
   return (battle.runtime.tick*COMBAT_TICK_MS/1000).toFixed(1)+' 秒';
@@ -55,6 +55,6 @@ export function renderResult(root:HTMLElement,run:Run){
   const score=run.results.map((value,index)=>'<div><small>'+encounters[index].name+'</small><b>'+value+'</b></div>').join('');
   root.innerHTML=header(run)+'<section class="results"><div class="kicker">第 '+(lastStage+1)+' 战 · '+encounters[lastStage].name+
     '</div><h1>'+title+'</h1><p>'+summary+'</p><div class="results-team">'+roster+'</div><div class="score">'+score+'</div>'+
-    reward+review+'<button class="primary" data-act="'+(end?'reset':'advance')+'">'+
+    reward+review+lineupExport+'<button class="primary" data-act="'+(end?'reset':'advance')+'">'+
     (end?'再来一局':nextShop?'进入下一间商店 · +'+encounters[run.stage+1].gold+' 金币':'查看本局总结')+'</button></section>';
 }

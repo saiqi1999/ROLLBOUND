@@ -9,6 +9,7 @@ import {unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {applyMagicTag} from './shop/tags.ts';
 import {loadRun,saveRun} from './save.ts';
+import {flushLineupLogs,queueLineup,startLineupLog} from './lineup-client.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
 import {changeShopPane,paintShopBoard,paintShopControls,paintSpinSummary,renderShop,type ShopPane} from './view/shop.ts';
@@ -31,6 +32,7 @@ let replayIndex:number|undefined,resumeAfterDialog=false;
 function save(){
   const stored=saveRun(run);
   document.querySelector('#save-status')!.textContent=stored?'':'浏览器未能保存，本局进度仅在当前标签页有效。';
+  if(run.battle&&(run.history.length===0||run.results[run.stage]))queueLineup(run);
 }
 
 function modal(title:string,html:string){
@@ -350,7 +352,14 @@ app.addEventListener('click',event=>{
       refreshTagPage(result.removed?'.tag-unit, .tags-heading button':'.tag-unit[aria-pressed="true"]');
       break;
     }
-    case 'fight':if(startBattle(run)){paused=false;save();render();}break;
+    case 'fight':
+      if(startBattle(run)){
+        startLineupLog(run);
+        paused=false;
+        save();
+        render();
+      }
+      break;
     case 'pause':togglePause();break;
     case 'step':paused=true;stopTimer();tick();break;
     case 'speed':stopTimer();speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
@@ -381,7 +390,11 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&(run.phase==='battle'||replayIndex!==undefined)&&!paused)togglePause();
+  if(!document.hidden)void flushLineupLogs();
 });
 
+window.addEventListener('online',()=>void flushLineupLogs());
 render();
 if(!loaded)save();
+else queueLineup(run);
+void flushLineupLogs();

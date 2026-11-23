@@ -35,6 +35,7 @@ export type BattlePlan = {
 };
 export type Battle = {
   id:string;
+  lineupLog?:{id:string;startedAt:number};
   units:Unit[];
   reserves:[string[],string[]];
   recruitedDeaths:[number,number];

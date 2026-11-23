@@ -79,6 +79,8 @@
 .tag-reward, .tag-notice { color: var(--gold); }
 .tag-notice:empty { display: none; }
 .tag-notice { margin: 12px 0; }
+.lineup-export { display: table; margin-bottom: 10px; color: var(--gold); font-size: .9rem; }
+.results .lineup-export { margin: 6px auto; }
 .tag-details { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
 .tag-details p { margin: 0; font-size: .88rem; line-height: 1.45; }
 .tag-details .tag-icon { width: 32px; height: 32px; }
