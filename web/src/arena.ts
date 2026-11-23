@@ -1,15 +1,15 @@
 import Phaser from 'phaser';
-import {ATTACK_MS,COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
+import {ARENA_ART_WAIT_MS,ATTACK_MS,COMBAT_TICK_MS,DEATH_MS,EFFECT_MS} from './timing.ts';
 import {actorFeedback,type ActorFeedback,type ActorEffect,type PlaybackFrame} from './playback.ts';
 import {COMBAT,type Point} from './battle/model.ts';
 import {clearHitFlash,flashHit} from './hit-flash.ts';
 import {units,type Kind} from './data.ts';
 import {currentAttack,maxHealth,type Battle,type Unit} from './engine.ts';
 const base=import.meta.env.BASE_URL+'art/';
-const actions:Record<Kind,string[]>=Object.fromEntries(
-  Object.keys(units).map(k=>[k,['idle','walk','attack','death']])
-) as Record<Kind,string[]>;
+const actions=['idle','walk','attack','death'] as const;
 const effectStills={empower:1,fireball:0} as const;
+const missingSprite=['ally-marker','enemy-marker'] as const;
+const spriteFrame={frameWidth:80,frameHeight:64};
 type Pose = 'attack'|'death';
 type ActorView = {
   root:Phaser.GameObjects.Container;
@@ -31,30 +31,46 @@ class Stage extends Phaser.Scene {
   ready=false;
   views=new Map<string,ActorView>();
   stillEffects:Phaser.GameObjects.GameObject[]=[];
+  private readonly kinds:Set<Kind>;
 
   onReady:()=>void;
 
-  constructor(onReady:()=>void){
+  constructor(battle:Battle,onReady:()=>void){
     super();
+    this.kinds=new Set(battle.units.map(unit=>unit.kind));
+    if(this.kinds.has('armoredSkeleton'))this.kinds.add('page');
     this.onReady=onReady;
   }
 
   preload(){
-    this.load.json('frames',base+'frames.json');
-    for(const [kind,moves] of Object.entries(actions))for(const move of moves){
-      this.load.spritesheet(kind+'-'+move,base+kind+'-'+move+'.png',{frameWidth:80,frameHeight:64});
+    const xhrSettings:Phaser.Types.Loader.XHRSettingsObject={responseType:'blob',timeout:ARENA_ART_WAIT_MS};
+    for(const kind of this.kinds)for(const move of actions){
+      this.load.spritesheet(kind+'-'+move,base+kind+'-'+move+'.png',spriteFrame,xhrSettings);
     }
-    for(const fx of Object.keys(effectStills))this.load.spritesheet('fx-'+fx,base+'fx-'+fx+'.png',{frameWidth:100,frameHeight:100});
+    for(const fx of Object.keys(effectStills)){
+      this.load.spritesheet('fx-'+fx,base+'fx-'+fx+'.png',{frameWidth:100,frameHeight:100},xhrSettings);
+    }
   }
   create(){
-    const frames=this.cache.json.get('frames');
-    for(const [k,moves] of Object.entries(actions))for(const move of moves){
-      const key=k+'-'+move;
-      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames[k][move]-1}),frameRate:move==='idle'?7:move==='walk'?12:16,repeat:move==='idle'||move==='walk'?-1:0});
+    const marker=this.make.graphics({x:0,y:0},false);
+    for(const side of [0,1] as const){
+      marker.clear().fillStyle(0x1c2924).fillRect(30,32,20,21);
+      marker.fillStyle(side?0xcc8c87:0x9dbf9e).fillRect(32,34,16,17);
+      marker.fillStyle(0xf7e4be).fillRect(35,37,10,2);
+      marker.generateTexture(missingSprite[side],spriteFrame.frameWidth,spriteFrame.frameHeight);
+    }
+    marker.destroy();
+    for(const kind of this.kinds)for(const move of actions){
+      const key=kind+'-'+move;
+      if(!this.textures.exists(key))continue;
+      const frames=this.anims.generateFrameNumbers(key);
+      if(frames.length)this.anims.create({key,frames,frameRate:move==='idle'?7:move==='walk'?12:16,repeat:move==='idle'||move==='walk'?-1:0});
     }
     for(const fx of Object.keys(effectStills)){
       const key='fx-'+fx;
-      this.anims.create({key,frames:this.anims.generateFrameNumbers(key,{start:0,end:frames.fx[fx]-1}),duration:EFFECT_MS,repeat:0});
+      if(!this.textures.exists(key))continue;
+      const frames=this.anims.generateFrameNumbers(key);
+      if(frames.length)this.anims.create({key,frames,duration:EFFECT_MS,repeat:0});
     }
     this.ready=true;
     this.scale.on('resize',()=>{if(latest)this.paint(latest.battle,latest.frame,true,false);});
@@ -99,7 +115,7 @@ class Stage extends Phaser.Scene {
       if(!view)view=this.createActor(unit,x,y);
       if(view.unit.kind!==unit.kind){
         view.pose=undefined;
-        view.sprite.stop().setTexture(unit.kind+'-idle',0);
+        view.sprite.stop().setTexture(...this.idleFrame(unit));
       }
       view.unit=unit;
       const {sprite,ground,root}=view;
@@ -183,16 +199,24 @@ class Stage extends Phaser.Scene {
     const key=view.unit.kind+'-'+pose;
     const {sprite}=view;
     view.pose=pose;
-    if(animate){
+    if(!this.anims.exists(key)){
+      sprite.stop().setTexture(...this.idleFrame(view.unit));
+    }else if(animate){
       const duration=pose==='attack'?ATTACK_MS:pose==='death'?DEATH_MS:EFFECT_MS;
       sprite.play({key,duration});
     }else sprite.stop().setTexture(key,Math.min(2,this.textures.get(key).frameTotal-2));
   }
 
   playLocomotion(view:ActorView,animate:boolean){
-    const key=view.unit.kind+(view.walking?'-walk':'-idle');
-    if(animate)view.sprite.play(key,true);
-    else view.sprite.stop().setTexture(key,0);
+    const walk=view.unit.kind+'-walk';
+    const [key,frame]=view.walking&&this.anims.exists(walk)?[walk,0]:this.idleFrame(view.unit);
+    if(animate&&frame!==undefined)view.sprite.play(key,true);
+    else view.sprite.stop().setTexture(key,frame);
+  }
+
+  idleFrame(unit:Unit):[string,number?]{
+    const key=unit.kind+'-idle';
+    return this.anims.exists(key)?[key,0]:[missingSprite[unit.side]];
   }
 
   removeActor(view:ActorView){
@@ -205,7 +229,7 @@ class Stage extends Phaser.Scene {
 
   createActor(unit:Unit,x:number,y:number){
     const ground=this.add.ellipse(0,1,23,5,0x0c1413,.5);
-    const sprite=this.add.sprite(0,3,unit.kind+'-idle').setOrigin(.5,54/64);
+    const sprite=this.add.sprite(0,3,...this.idleFrame(unit)).setOrigin(.5,54/64);
     const root=this.add.container(x,y,[ground,sprite]).setDepth(y);
     const view:ActorView={root,sprite,ground,unit,goal:{x,y},walking:false};
     this.views.set(unit.id,view);
@@ -229,6 +253,7 @@ class Stage extends Phaser.Scene {
 
   playEffect(effect:ActorEffect,x:number,y:number,scale:number,animate:boolean,root?:Phaser.GameObjects.Container){
     const key='fx-'+effect;
+    if(!this.anims.exists(key))return;
     const sprite=this.add.sprite(x,y,key).setDepth(this.scale.height+1).setOrigin(.5,.60).setScale(scale);
     root?.add(sprite);
     if(animate)sprite.play(key).once(Phaser.Animations.Events.ANIMATION_COMPLETE,()=>sprite.destroy());
@@ -271,8 +296,8 @@ class Stage extends Phaser.Scene {
   }
 
 }
-export function mountArena(parent:HTMLElement,onReady:()=>void){
-  scene=new Stage(onReady);
+export function mountArena(parent:HTMLElement,battle:Battle,onReady:()=>void){
+  scene=new Stage(battle,onReady);
   game=new Phaser.Game({type:Phaser.CANVAS,parent,transparent:true,pixelArt:true,banner:false,audio:{noAudio:true},scene,scale:{width:parent.clientWidth,height:parent.clientHeight}});
   observer=new ResizeObserver(()=>{if(parent.clientWidth&&parent.clientHeight)game?.scale.resize(parent.clientWidth,parent.clientHeight);});observer.observe(parent);
 }

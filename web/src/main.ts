@@ -1,5 +1,5 @@
 import './style.css';
-import {COMBAT_TICK_MS} from './timing.ts';
+import {ARENA_ART_WAIT_MS,COMBAT_TICK_MS} from './timing.ts';
 import {playbackFrames,type PlaybackFrame} from './playback.ts';
 import {encounters,spells,unitEffectText,units,WEREWOLF_RECRUIT_GAIN,type Kind,type SpellKind} from './data.ts';
 import {advance,commitBattleWindow,newRun,simulateBattleWindow,startBattle,type Run} from './engine.ts';
@@ -24,7 +24,7 @@ const loaded=loadRun();
 let run:Run=loaded??newRun(getSeed());
 let shopPane:ShopPane='wheel',spinController:AbortController|undefined;
 let tagsOpen=false,tagSelection:TagSelection={notice:''};
-let arena:typeof Arena|undefined,arenaReady=false,arenaToken=0;
+let arena:typeof Arena|undefined,arenaReady=false,arenaToken=0,arenaWait=0;
 let timer=0,startedAt=0,remaining=0,paused=false,speed=1;
 let frames:PlaybackFrame[]=[],frameIndex=0,pending:BattleWindow|undefined,playbackStart:Battle|undefined;
 let replayIndex:number|undefined,resumeAfterDialog=false;
@@ -188,6 +188,8 @@ function togglePause(){
 
 function leaveBattle(){
   stopTimer();
+  window.clearTimeout(arenaWait);
+  arenaWait=0;
   arenaReady=false;
   arenaToken++;
   arena?.closeArena();
@@ -217,20 +219,29 @@ function mountBattle(){
   const token=++arenaToken;
   arenaReady=false;
   const host=renderBattle(app,run,replayIndex!==undefined);
-  const ready=()=>{
+  const notice=app.querySelector<HTMLElement>('#arena-notice')!;
+  const ready=(message?:string)=>{
     if(token!==arenaToken)return;
+    window.clearTimeout(arenaWait);
+    arenaWait=0;
+    notice.hidden=message===undefined;
+    if(message)notice.textContent=message;
+    if(arenaReady)return;
     arenaReady=true;
     schedule();
   };
+  arenaWait=window.setTimeout(()=>ready('画面仍在加载，战斗继续进行。'),ARENA_ART_WAIT_MS);
   void import('./arena.ts').then(module=>{
     if(token!==arenaToken)return;
     arena=module;
-    module.mountArena(host,ready);
+    module.mountArena(host,currentState(),ready);
     module.paintArena(currentState(),currentFrame(),speed,paused);
   }).catch(error=>{
     if(token!==arenaToken)return;
     console.error('Unable to load the battle arena',error);
-    ready();
+    arena?.closeArena();
+    arena=undefined;
+    ready('战斗画面暂不可用，仍可查看战报。');
   });
   paint();
 }

@@ -17,7 +17,8 @@ export function renderBattle(root:HTMLElement,run:Run,replay:boolean){
     ' 战 / '+encounters.length+'</small><h1>'+encounters[run.stage].name+'</h1></div><span class="round" id="battle-time"></span></div>'+
     '<div class="commanders"><span id="team0"></span><b>VS</b><span id="team1"></span></div>'+
     '<div class="theatre"><div class="arena-wrap"><canvas id="scenery" aria-hidden="true"></canvas>'+
-    '<div id="arena" aria-label="自动战斗场面"></div></div></div>'+
+    '<div id="arena" aria-label="自动战斗场面"></div>'+
+    '<p id="arena-notice" role="status">正在载入战斗画面…</p></div></div>'+
     '<aside class="feed" aria-live="polite"><b id="phase"></b><span id="message"></span></aside>'+
     '<div class="controls"><button data-act="pause" id="pause"></button><button data-act="step">单步</button>'+
     '<button data-act="speed" id="speed"></button><button data-act="log">战报</button>'+
