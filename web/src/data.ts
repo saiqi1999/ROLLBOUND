@@ -1,6 +1,6 @@
 import {magicTags,type TagId} from './magic-tags.ts';
 
-export const races = {human:'人类', orc:'兽人', undead:'亡灵', monster:'怪物'} as const;
+export const races = {human:'人类', orc:'兽人', undead:'亡灵', monster:'怪物', demon:'恶魔'} as const;
 type Race = keyof typeof races;
 type UnitEffectContext = {spellCasts?:number;evolutionTriggers?:number};
 type UnitDefinition = {
@@ -21,6 +21,7 @@ export const BONE_ATTACK_GAIN=4;
 export const FEL_SQUIRE_GAIN=3;
 export const GREATSWORD_COPY_GAIN=8;
 export const WEREWOLF_RECRUIT_GAIN=1;
+export const DEMON_STAT_PERCENT=50;
 export const wizardEntryGain=(spellCasts=0)=>1+spellCasts;
 export const eliteOrcEvolutionGain=(evolutionTriggers=0)=>1+evolutionTriggers;
 
@@ -56,6 +57,7 @@ export const units = {
   warlock: { name:'术士', race:'orc', hp:10, atk:3, text:'使相邻的兽人进化为邪能侍从，重甲兽人进化为邪能守卫。' },
   felSquire: { name:'邪能侍从', race:['orc','undead'], hp:10, atk:3, text:'死亡时，使所有友方单位获得+'+FEL_SQUIRE_GAIN+'/+'+FEL_SQUIRE_GAIN+'。' },
   felGuard: { name:'邪能守卫', race:['orc','undead'], hp:24, atk:6, text:'死亡时，随机获得1枚标签。' },
+  demon: { name:'小恶魔', race:'demon', hp:7, atk:3, text:'每次摇盘，永久获得身材最大的相邻友方单位'+DEMON_STAT_PERCENT+'%的攻击和生命（身材为攻击与生命之和，分别向上取整）。' },
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
 export const unitKinds=Object.keys(units) as Kind[];
@@ -73,7 +75,7 @@ type ShopKind=Exclude<Kind,'felSquire'|'felGuard'>;
 const unitPrices:Record<ShopKind,number>={
   guard:2,archer:3,medic:3,king:5,page:1,orc:3,bone:2,
   soldier:2,swordsman:3,axeman:3,lancer:3,templar:4,wizard:3,armoredOrc:5,slime:1,
-  orcRider:9,armoredSkeleton:4,bat:3,greatswordSkeleton:4,eliteOrc:5,werebear:5,werewolf:4,warlock:5,
+  orcRider:9,armoredSkeleton:4,bat:3,greatswordSkeleton:4,eliteOrc:5,werebear:5,werewolf:4,warlock:5,demon:3,
 };
 export const shopKinds=unitKinds.filter((kind):kind is ShopKind=>Object.hasOwn(unitPrices,kind));
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];

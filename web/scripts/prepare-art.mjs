@@ -12,7 +12,7 @@ const names={
   soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
   armoredOrc:'Armored Orc',slime:'Slime',orcRider:'Orc rider',armoredSkeleton:'Armored Skeleton',bat:'Bat',
   greatswordSkeleton:'Greatsword Skeleton',eliteOrc:'Elite Orc',werebear:'Werebear',werewolf:'Werewolf',
-  warlock:'Warlock',felSquire:'Black Knight_A',felGuard:'Black Knight_B',
+  warlock:'Warlock',felSquire:'Black Knight_A',felGuard:'Black Knight_B',demon:'Demon_A',
 };
 const felUnits=new Set(['warlock','felSquire','felGuard']);
 const warlockRobe=new Map([

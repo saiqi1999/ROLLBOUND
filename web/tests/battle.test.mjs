@@ -58,6 +58,43 @@ test('a four-by-four draw contains distinct symbols and includes diagonal neighb
   assert.equal(drawShopBoard(run.roster.slice(0,1),[],{rng:42}).filter(Boolean).length,1);
 });
 
+test('a demon creates half the stats of the strongest adjacent unit',()=>{
+  const {run,roster:[demon,guard,bear,wolf],roll}=sampleSpin(['demon','guard','werebear','werewolf'],[],
+    (near,[source,highest,attacker,distant],_,result)=>{
+      const slot=unit=>result.drawn.findIndex(entry=>entry?.id===unit.id);
+      const diagonal=Math.abs(slot(source)%4-slot(highest)%4)===1&&
+        Math.abs(Math.floor(slot(source)/4)-Math.floor(slot(highest)/4))===1;
+      return diagonal&&near(source,attacker)&&!near(source,distant);
+    },
+    ([,guard,bear,wolf])=>{
+      Object.assign(guard,{gainedAttack:15,gainedHealth:20,startingArmor:40,tag:'shield'});
+      bear.gainedAttack=27;
+      Object.assign(wolf,{gainedAttack:90,gainedHealth:90});
+    });
+  assert.ok(hasRace(demon.kind,'demon'));
+  assert.equal(unitOffer(demon.kind).price,3);
+  assert.deepEqual(roll.events.map(event=>event.focus),[[demon.id,guard.id]]);
+  assert.deepEqual(unitStats(demon),{attack:12,health:23});
+  assert.equal(demon.startingArmor,0);
+  assert.deepEqual(unitStats(guard),{attack:17,health:32,tag:'shield'});
+  assert.equal(unitStats(bear).attack,30);
+  assert.equal(unitStats(wolf).attack,93);
+  assert.ok(startBattle(run));
+  assert.equal(run.battle.units.find(unit=>unit.id===demon.id).hp,23);
+});
+
+test('a wheel change can recheck a demon without granting stats twice in the same spin',()=>{
+  const {roster:[demon,guard,king,page],roll}=sampleSpin(['demon','guard','king','page'],[],
+    (near,[source,ally,necromancer,skeleton],_,result)=>
+      near(source,ally)&&near(source,skeleton)&&near(necromancer,skeleton)&&
+      result.drawn.findIndex(slot=>slot?.id===source.id)<result.drawn.findIndex(slot=>slot?.id===necromancer.id));
+  assert.equal(roll.settled.some(slot=>slot?.id===page.id),false);
+  assert.equal(roll.events.filter(event=>event.buffed?.includes(demon.id)).length,1);
+  assert.deepEqual(roll.events[0].focus,[demon.id,guard.id]);
+  assert.ok(roll.events.some(event=>event.focus.includes(king.id)));
+  assert.deepEqual(unitStats(demon),{attack:4,health:13});
+});
+
 test('paid spins cost 1, 1, 2, 2, 3, 3 with no counter change on refresh or rejection',()=>{
   const run=newRun(8);
   assert.equal(resolveSpin(run),undefined);

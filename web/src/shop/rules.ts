@@ -1,5 +1,5 @@
 import {
-  ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,FEL_SQUIRE_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,NECROMANCER_GOLD,
+  ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,DEMON_STAT_PERCENT,FEL_SQUIRE_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,NECROMANCER_GOLD,
   ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,WEREWOLF_RECRUIT_GAIN,
   canEvolveOrc,eliteOrcEvolutionGain,hasGuardian,hasRace,humanKinds,
   shopKinds,spellKinds,spellOffer,spells,tagOffer,unitOffer,units,wizardEntryGain,
@@ -346,6 +346,17 @@ function resolveLink(spin:Spin,source:UnitInstance,index:number,prefix:string){
       const guards=neighbors.filter(unit=>hasGuardian(unit.kind));
       if(!guards.length||!grantLinkGrowth(spin,source,'archer',{attack:1}))break;
       announce('永久 +1 攻击。',guards,[source]);
+      break;
+    }
+    case 'demon':{
+      const [strongest]=neighbors.map(unit=>({unit,...unitStats(unit)}))
+        .sort((left,right)=>(right.attack+right.health)-(left.attack+left.health));
+      if(!strongest)break;
+      const attack=Math.ceil(strongest.attack*DEMON_STAT_PERCENT/100);
+      const health=Math.ceil(strongest.health*DEMON_STAT_PERCENT/100);
+      if(grantLinkGrowth(spin,source,'demon',{attack,health})){
+        announce('永久获得 +'+attack+'/+'+health+'（参考'+name(strongest.unit)+'）。',[strongest.unit],[source]);
+      }
       break;
     }
     case 'medic':
