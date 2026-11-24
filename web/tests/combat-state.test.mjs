@@ -230,8 +230,8 @@ test('rider extra attacks find a live enemy and use the earlier permanent kill g
   charge(run.battle,'0-0','1-0');
   const window=simulateBattleWindow(run.battle,{tickLimit:1});
   assert.deepEqual(window.events.filter(event=>event.action==='attack').map(event=>
-    [event.target,event.damage,event.followUp]),[['1-0',3,undefined],['1-1',4,true]]);
-  assert.equal(window.next.units.find(unit=>unit.id==='1-1').hp,6);
+    [event.target,event.damage,event.followUp]),[['1-0',9,undefined],['1-1',10,true]]);
+  assert.equal(window.next.units.find(unit=>unit.id==='1-1').hp,0);
   assert.equal(frameMessage(playbackFrames(window)[0]).phase,'连击');
   assert.ok(commitBattleWindow(run,window));
   while(run.phase==='battle')commitBattleWindow(run,simulateBattleWindow(run.battle,{captureEvents:false}));
@@ -251,7 +251,7 @@ test('one triple strike prioritizes reachable guardians and uses a shared damage
   const attacks=window.events.filter(event=>event.action==='attack');
   const [primary,extra,...rest]=attacks;
   assert.deepEqual([primary.target,extra.target,rest[0].target],['1-0','1-1','1-3']);
-  assert.ok(attacks.slice(0,3).every(hit=>hit.attackId===primary.attackId&&hit.damage===3));
+  assert.ok(attacks.slice(0,3).every(hit=>hit.attackId===primary.attackId&&hit.damage===9));
   assert.equal(window.next.units[0].bonus,3);
   assert.equal(actorFeedback(window.events).get(rider.id).attack,true);
   assert.equal(attacks.filter(hit=>hit.followUp).length,0);
@@ -267,7 +267,7 @@ test('triple rider hits use one snapshot, followed by an independent single stri
   const attacks=window.events.filter(event=>event.action==='attack');
   assert.equal(new Set(attacks.slice(0,3).map(event=>event.target)).size,3);
   assert.equal(new Set(attacks.slice(0,3).map(event=>event.attackId)).size,1);
-  assert.deepEqual(attacks.map(event=>event.damage),[3,3,3,4]);
+  assert.deepEqual(attacks.map(event=>event.damage),[9,9,9,10]);
   assert.equal(attacks.at(-1).followUp,true);
   assert.notEqual(attacks.at(-1).target,'1-0');
   assert.notEqual(attacks.at(-1).attackId,attacks[0].attackId);
@@ -356,19 +356,22 @@ test('simultaneous strikes and movement share one fixed playback beat',()=>{
   assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
 });
 
-test('undead archers stack combat attack on each final friendly undead death',()=>{
-  const {battle}=scenario([['bone',395,210],['page',430,310],['page',430,385]],[['orc',520,310]]);
-  const enemy=battle.units.at(-1);
+test('each living undead archer buffs all surviving friendly undead after each death',()=>{
+  const {battle}=scenario([['bone'],['bone'],['page'],['page'],['king'],['guard'],['greatswordSkeleton']],[['orc']]);
+  const [archer,other,first,second,king,human,reserve,enemy]=battle.units;
+  reserve.field=false;
+  delete battle.runtime.actors[reserve.id];
+  battle.reserves[0].push(reserve.id);
   const effects=createEffects(battle,()=>{});
-  effects.attack(enemy,[battle.units[1]]);
-  effects.attack(enemy,[battle.units[2]]);
-  assert.equal(currentAttack(battle.units[0]),8);
-  assert.equal(battle.units.length,4);
+  effects.attack(enemy,[first]);
+  effects.attack(enemy,[second]);
+  assert.deepEqual([archer,other,king,reserve,human,enemy].map(currentAttack),[14,14,15,15,2,3]);
+  assert.deepEqual([first,second].map(currentAttack),[1,7]);
 });
 
 test('the adventure can progress seven times with one grant per shop and three even-win removal marks',()=>{
   const run=newRun(5);
-  for(let index=0;index<6;index++)recruit(run,'archer',50,200);
+  for(let index=0;index<12;index++)recruit(run,'archer',100,200);
   for(let stage=0;stage<7;stage++){
     assert.equal(run.stage,stage);
     assert.equal(run.shop.paidSpins,0);

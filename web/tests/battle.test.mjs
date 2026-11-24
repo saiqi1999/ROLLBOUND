@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {encounters,spellOffer,unitEffectText,unitOffer} from '../src/data.ts';
+import {encounters,spellOffer,unitEffectText,unitOffer,units} from '../src/data.ts';
 import {advance,canStartBattle,newRun,startBattle} from '../src/engine.ts';
 import {addTag,tagCount} from '../src/magic-tags.ts';
 import {unitStats} from '../src/shop/model.ts';
@@ -37,6 +37,9 @@ test('every shop has three distinct unit cards, one spell or tag, and the round 
   assert.equal(unitOffer('page').price,1);
   assert.equal(unitOffer('guard').price,2);
   assert.equal(unitOffer('king').price,5);
+  assert.equal(unitOffer('orcRider').price,9);
+  assert.equal(units.armoredOrc.atk,6);
+  assert.equal(units.orcRider.atk,9);
   assert.equal(spellOffer('recruit').price,2);
   assert.equal(spellOffer('surge').price,3);
   assert.equal(spellOffer('fireball').price,4);
@@ -206,24 +209,24 @@ test('a skeleton destroyed in the shop grants two gold without replacing its ins
   const [king,page]=roster;
   assert.equal(run.gold,21);
   assert.deepEqual(run.roster,[king]);
-  assert.deepEqual([king.gainedAttack,king.gainedHealth],[2,2]);
+  assert.deepEqual([king.gainedAttack,king.gainedHealth],[3,3]);
   assert.ok(roll.drawn.some(slot=>slot?.id===page.id));
   assert.ok(roll.settled.every(slot=>slot?.id!==page.id));
 });
 
-test('greatsword copies keep permanent stats and wait across saves and battles for the next paid spin',t=>{
+test('greatsword copies keep permanent stats and join at checkout even after a reload',t=>{
   const team=['king','greatswordSkeleton',...Array(14).fill('guard')];
   const {run,roster:[king,original],roll}=sampleSpin(team,[],(near,[king,skeleton])=>near(king,skeleton),
     ([,skeleton])=>Object.assign(skeleton,{gainedAttack:4,gainedHealth:7,startingArmor:3}));
   assert.equal(roll.events.length,1);
-  assert.match(roll.events[0].text,/下次摇盘入队/);
+  assert.match(roll.events[0].text,/下次摇盘或开战前入队/);
   assert.equal(run.roster.length,15);
   const [copy]=run.pendingRecruits;
   assert.deepEqual(run.pendingRecruits,[{
-    id:'0-16',kind:'greatswordSkeleton',gainedAttack:9,gainedHealth:12,startingArmor:3,
+    id:'0-16',kind:'greatswordSkeleton',gainedAttack:12,gainedHealth:15,startingArmor:3,
   }]);
   assert.ok(roll.settled.every(slot=>slot?.id!==original.id&&slot?.id!==copy.id));
-  assert.deepEqual([king.gainedAttack,king.gainedHealth],[2,2]);
+  assert.deepEqual([king.gainedAttack,king.gainedHealth],[3,3]);
 
   mockStorage(t);
   assert.ok(saveRun(run));
@@ -233,20 +236,12 @@ test('greatsword copies keep permanent stats and wait across saves and battles f
   assert.equal(resolveSpin(loaded),undefined);
   assert.deepEqual(loaded.pendingRecruits,[copy]);
   assert.ok(startBattle(loaded));
-  assert.ok(loaded.battle.units.every(unit=>unit.id!==copy.id));
+  const fighter=loaded.battle.units.find(unit=>unit.id===copy.id);
+  assert.deepEqual([fighter.side,fighter.bonus,fighter.hp,fighter.shield],[0,12,23,3]);
+  assert.deepEqual(loaded.pendingRecruits,[]);
   loaded.phase='result';
   advance(loaded);
-  assert.deepEqual(loaded.pendingRecruits,[copy]);
-  const second=resolveSpin(loaded);
-  assert.ok(second.drawn.some(slot=>slot?.id===copy.id));
-  assert.deepEqual(second.drawnStats[copy.id],{attack:12,health:20});
-  const copySurvived=loaded.roster.some(unit=>unit.id===copy.id);
-  assert.equal(loaded.pendingRecruits.length,copySurvived?0:1);
-  if(!copySurvived){
-    assert.equal(loaded.pendingRecruits[0].gainedAttack,14);
-    assert.equal(loaded.pendingRecruits[0].gainedHealth,17);
-    assert.ok(second.settled.every(slot=>slot?.kind!=='greatswordSkeleton'));
-  }
+  assert.equal(loaded.roster.filter(unit=>unit.id===copy.id).length,1);
 });
 
 test('a necromancer can destroy all eight adjacent skeletons in one spin and queue each copy',()=>{
@@ -254,7 +249,7 @@ test('a necromancer can destroy all eight adjacent skeletons in one spin and que
     ['king',...Array(15).fill('greatswordSkeleton')],[],(_, [source], __, result)=>
       neighborSlots(result.drawn.findIndex(slot=>slot?.id===source.id)).length===8,
   );
-  assert.deepEqual([king.gainedAttack,king.gainedHealth],[16,16]);
+  assert.deepEqual([king.gainedAttack,king.gainedHealth],[24,24]);
   assert.equal(run.pendingRecruits.length,8);
   assert.equal(roll.settled.filter(Boolean).length,8);
   assert.equal(roll.events.length,1);
@@ -303,11 +298,11 @@ test('armored skeleton destruction fills randomized empty slots and can chain mu
   assert.ok(positions.every(index=>!roll.drawn[index]||roll.drawn[index].id===armored.id));
   assert.equal(new Set(positions.map(index=>death.after.board[index].id)).size,3);
   assert.deepEqual(roll.drawnStats[king.id],{attack:3,health:12});
-  assert.deepEqual(death.after.stats[king.id],{attack:5,health:14});
+  assert.deepEqual(death.after.stats[king.id],{attack:6,health:15});
   assert.ok(death.buffed.includes(king.id));
   assert.match(chain.text,/^连锁 · 亡灵法师/);
   const chomped=positions.filter(index=>neighborSlots(roll.drawn.findIndex(slot=>slot?.id===king.id)).includes(index)).length;
-  assert.deepEqual(roll.settledStats[king.id],{attack:5+2*chomped,health:14+2*chomped});
+  assert.deepEqual(roll.settledStats[king.id],{attack:6+3*chomped,health:15+3*chomped});
   assert.equal(run.roster.filter(unit=>unit.kind==='page').length,3-chomped);
   assert.equal(run.gold,19+2*chomped);
 });
@@ -335,33 +330,40 @@ test('a space opened by a later unit rechecks vulnerable earlier slots',()=>{
   assert.deepEqual(roll.events[1].after.stats[lancer.id],{attack:4,health:7});
 });
 
-test('destroying an undead archer adds permanent attack to the destroyer and to a surviving archer',()=>{
-  const {run,roster}=sampleSpin(['king','bone','bone'],[],(near,[king,victim,observer])=>
-    near(king,victim)&&!near(king,observer));
-  const [king,victim,observer]=roster;
-  assert.deepEqual(run.roster,[king,observer]);
-  assert.equal(king.gainedAttack,5);
-  assert.equal(observer.gainedAttack,3);
+test('a surviving archer buffs all undead once per shop destruction',()=>{
+  const {run,roster}=sampleSpin(['king','page','page','bone','greatswordSkeleton','guard'],[],
+    (near,[king,first,second,observer,ally])=>near(king,first)&&near(king,second)&&!near(king,observer)&&!near(king,ally));
+  const [king,,,observer,ally,human]=roster;
+  assert.deepEqual(run.roster,[king,observer,ally,human]);
+  assert.deepEqual([king.gainedAttack,observer.gainedAttack,ally.gainedAttack,human.gainedAttack],[12,6,6,0]);
 });
 
 test('a shared target is destroyed by the first necromancer in display order exactly once',()=>{
   const {run,roster,roll}=sampleSpin(['king','king','page'],[],(near,[left,right,page])=>near(left,page)&&near(right,page));
   const first=roll.drawn.find(slot=>slot?.kind==='king');
-  assert.equal(roster.find(unit=>unit.id===first.id).gainedAttack,2);
+  assert.equal(roster.find(unit=>unit.id===first.id).gainedAttack,3);
   assert.equal(roster.filter(unit=>unit.kind==='king'&&unit.gainedAttack===0).length,1);
   assert.equal(run.gold,21);
   assert.equal(roll.events.length,1);
 });
 
-test('spells resolve before links, and an Orc with six attack evolves before the next fight',()=>{
+test('an Orc with exactly five attack evolves when a spell raises its attack',()=>{
+  const {roster,roll}=sampleSpin(['orc'],['surge'],(near,[orc],[surge])=>near(orc,surge));
+  assert.equal(roster[0].kind,'armoredOrc');
+  assert.equal(roster[0].gainedAttack,2);
+  assert.equal(roll.settledStats[roster[0].id].attack,8);
+});
+
+test('spells resolve before links and evolution can trigger the same wizard again',()=>{
   const {run,roster,spells,roll}=sampleSpin(['orc','wizard'],['surge'],(near,[orc,wizard],[surge])=>
     near(surge,orc)&&near(wizard,orc));
   assert.ok(roll.events[0].focus.includes(spells[0].id));
-  assert.equal(roster[0].gainedAttack,4);
+  assert.equal(roster[0].gainedAttack,6);
   assert.equal(roster[0].kind,'armoredOrc');
   assert.equal(run.spellCasts,1);
   assert.equal(run.spells.length,0);
   assert.equal(roll.settled.find(slot=>slot?.id===roster[0].id).kind,'armoredOrc');
+  assert.equal(roll.events.filter(event=>event.text.includes('法师 · 相邻友方')).length,2);
 });
 
 test('armored orc needs two other neighboring Orcs and retains its permanent stats',()=>{
@@ -371,7 +373,7 @@ test('armored orc needs two other neighboring Orcs and retains its permanent sta
   assert.equal(roster[0].gainedHealth,9);
 });
 
-test('an elite orc buffs each evolving ally in order and strengthens its own effect',()=>{
+test('an elite orc strengthens the whole faction after each evolution',()=>{
   const {run,roster:[elite],roll}=sampleSpin(['eliteOrc','orc','orc'],[],(near,[elite,first,second])=>
     !near(elite,first)||!near(elite,second),([,first,second])=>{
     first.gainedAttack=3;
@@ -379,8 +381,8 @@ test('an elite orc buffs each evolving ally in order and strengthens its own eff
   });
   const evolving=roll.drawn.filter(slot=>slot?.kind==='orc');
   assert.deepEqual(evolving.map(slot=>run.roster.find(unit=>unit.id===slot.id)?.kind),['armoredOrc','armoredOrc']);
-  assert.deepEqual(evolving.map(slot=>roll.settledStats[slot.id]),[{attack:7,health:25},{attack:8,health:26}]);
-  assert.deepEqual(unitStats(elite),{attack:4,health:16});
+  assert.deepEqual(evolving.map(slot=>roll.settledStats[slot.id]),[{attack:12,health:27},{attack:12,health:27}]);
+  assert.deepEqual(unitStats(elite),{attack:7,health:19});
   assert.equal(elite.evolutionTriggers,2);
   assert.ok(roll.events.every(event=>event.focus.includes(elite.id)));
   run.phase='result';
@@ -389,10 +391,22 @@ test('an elite orc buffs each evolving ally in order and strengthens its own eff
   assert.match(unitEffectText('eliteOrc'),/永久获得\+1\/\+1/);
 });
 
-test('the wizard description shows the current spell-scaled bonus and its cap',()=>{
+test('elite evolution also reaches earlier Orcs off the wheel at departure',()=>{
+  const run=newRun(41);
+  const elite=recruit(run,'eliteOrc'),early=recruit(run,'orc',1),late=recruit(run,'orc',2);
+  const human=recruit(run,'guard');
+  assert.ok(startBattle(run));
+  assert.equal(early.kind,'armoredOrc');
+  assert.equal(late.kind,'armoredOrc');
+  assert.deepEqual([unitStats(early).attack,unitStats(late).attack],[10,11]);
+  assert.equal(elite.evolutionTriggers,2);
+  assert.equal(human.gainedAttack,0);
+});
+
+test('the wizard description shows the full spell-scaled bonus',()=>{
   assert.match(unitEffectText('wizard'),/获得\+1\/\+1/);
   assert.match(unitEffectText('wizard',{spellCasts:2}),/获得\+3\/\+3。每施放一个法术，强化此效果/);
-  assert.match(unitEffectText('wizard',{spellCasts:9}),/获得\+4\/\+4/);
+  assert.match(unitEffectText('wizard',{spellCasts:9}),/获得\+10\/\+10/);
 });
 
 test('summoning circle places a boosted human who can trigger links in the same roll',()=>{
@@ -467,4 +481,15 @@ test('an older save opens a new game while v6 restores the inventory and equippe
   assert.ok(applyMagicTag(run,guard.id,'shield').ok);
   assert.ok(saveRun(run));
   assert.deepEqual(loadRun(),run);
+});
+
+test('an unbought rider offer in an existing save uses the updated price',t=>{
+  mockStorage(t);
+  const run=newRun(69);
+  run.shop.offers=[{...unitOffer('orcRider'),price:6}];
+  assert.ok(saveRun(run));
+  const loaded=loadRun();
+  assert.equal(loaded.shop.offers[0].price,9);
+  assert.ok(buy(loaded,0));
+  assert.equal(loaded.gold,11);
 });

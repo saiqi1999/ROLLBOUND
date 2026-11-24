@@ -69,9 +69,12 @@ export function createEffects(battle:Battle,record:RecordMoment){
       buff('阵亡',unit,allies,'使其他在场友方人类本场 '+gain+'。',gain,'empower');
     }
     if(units[unit.kind].race==='undead'){
-      const archers=battle.units.filter(other=>other.side===unit.side&&other.kind==='bone'&&deployed(other));
-      for(const archer of archers)grantBattleStats(archer,BONE_ATTACK_GAIN,0);
-      buff('阵亡',unit,archers,'使在场骷髅弓箭手本场 +'+BONE_ATTACK_GAIN+' 攻击。','+'+BONE_ATTACK_GAIN+' 攻','empower');
+      const allies=battle.units.filter(other=>other.side===unit.side&&units[other.kind].race==='undead'&&other.hp>0);
+      const gain=allies.filter(other=>other.kind==='bone'&&deployed(other)).length*BONE_ATTACK_GAIN;
+      if(gain){
+        for(const ally of allies)grantBattleStats(ally,gain,0);
+        buff('阵亡',unit,allies,'触发骷髅弓箭手，使存活友方亡灵本场 +'+gain+' 攻击。','+'+gain+' 攻','empower');
+      }
     }
     if(unit.kind==='armoredSkeleton')spawnSummonedUnits(unit);
   }

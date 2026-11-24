@@ -1,5 +1,5 @@
 import type {Run} from './engine.ts';
-import {captureLineup} from './lineup-log.ts';
+import {BATTLE_RULESET,captureLineup} from './lineup-log.ts';
 
 export const lineupLogging=import.meta.env.VITE_LINEUP_LOGGING==='1';
 const prefix='rollbound.lineup.pending.';
@@ -18,7 +18,7 @@ function newId(){
 export function startLineupLog(run:Run){
   if(!lineupLogging||!run.battle)return;
   run.lineupRunId??=newId();
-  run.battle.lineupLog={id:newId(),startedAt:Date.now()};
+  run.battle.lineupLog={id:newId(),startedAt:Date.now(),ruleset:BATTLE_RULESET};
 }
 
 export function queueLineup(run:Run){

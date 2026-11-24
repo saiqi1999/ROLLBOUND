@@ -85,7 +85,7 @@ test('a tagged greatsword replacement waits and competes for its region on the n
   assert.ok(!first.settled.some(slot=>slot?.id===copy.id));
   const second=resolveSpin(run);
   assert.ok(tagRegions.center.includes(second.drawn.findIndex(slot=>slot?.id===copy.id)));
-  assert.deepEqual(second.drawnStats[copy.id],{attack:12,health:15,tag:'center'});
+  assert.deepEqual(second.drawnStats[copy.id],{attack:15,health:18,tag:'center'});
 });
 
 test('all growth tags resolve once at departure, preserving a tag through evolution',()=>{

@@ -1,4 +1,4 @@
-import {encounters,units} from './data.ts';
+import {encounters,unitOffer,units} from './data.ts';
 import type {Run} from './engine.ts';
 import {magicTags} from './magic-tags.ts';
 import {WHEEL_SIZE} from './shop/wheel.ts';
@@ -15,6 +15,9 @@ export function loadRun():Run|undefined{
       saved.tagInventory&&Object.entries(saved.tagInventory).every(([tag,count])=>
         Object.hasOwn(magicTags,tag)&&Number.isSafeInteger(count)&&count>0)&&
       (saved.phase!=='battle'||saved.battle?.runtime)){
+      for(const offer of saved.shop.offers){
+        if(offer.type==='unit'&&!offer.sold)offer.price=unitOffer(offer.kinds[0]).price;
+      }
       return saved;
     }
   }catch{

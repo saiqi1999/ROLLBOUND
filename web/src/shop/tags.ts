@@ -36,8 +36,8 @@ export function applyMagicTag(run:Run,unitId:string,tag:TagId):TagActionResult{
 }
 
 export function applyShopEndTags(run:Run){
-  const growing=run.roster.filter(unit=>unit.tag==='growth');
-  if(!growing.length)return;
-  for(const unit of growing)grantGrowth(unit,{attack:GROWTH_TAG_GAIN,health:GROWTH_TAG_GAIN});
+  for(const unit of run.roster){
+    if(unit.tag==='growth')grantGrowth(unit,{attack:GROWTH_TAG_GAIN,health:GROWTH_TAG_GAIN});
+  }
   resolveEvolutions(run);
 }

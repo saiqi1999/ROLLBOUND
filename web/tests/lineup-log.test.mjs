@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import test from 'node:test';
 import {commitBattleWindow,newRun,simulateBattleWindow,startBattle} from '../src/engine.ts';
-import {captureLineup} from '../src/lineup-log.ts';
+import {BATTLE_RULESET,captureLineup} from '../src/lineup-log.ts';
 import {handleLineups} from '../src/server/lineups.ts';
 import {recruit} from '../src/shop/rules.ts';
 
@@ -14,8 +14,22 @@ const runId='a'.repeat(32);
 function startLoggedBattle(run,id='b'.repeat(32)){
   assert.ok(startBattle(run));
   run.lineupRunId=runId;
-  run.battle.lineupLog={id,startedAt:1795478400000};
+  run.battle.lineupLog={id,startedAt:1795478400000,ruleset:BATTLE_RULESET};
 }
+
+test('lineup snapshots preserve older opening attack values and label new combat rules',()=>{
+  const run=newRun(63);
+  recruit(run,'orcRider',2);
+  recruit(run,'armoredOrc',4);
+  startLoggedBattle(run);
+  const current=captureLineup(run);
+  assert.equal(current.ruleset,2);
+  assert.deepEqual(current.lineup.starters.map(unit=>unit.atk),[11,10]);
+  delete run.battle.lineupLog.ruleset;
+  const old=captureLineup(run);
+  assert.equal(old.ruleset,1);
+  assert.deepEqual(old.lineup.starters.map(unit=>unit.atk),[5,7]);
+});
 
 function database(t){
   const db=new DatabaseSync(':memory:');

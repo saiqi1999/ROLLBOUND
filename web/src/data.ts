@@ -15,13 +15,12 @@ export const ARMORED_SKELETON_SPAWNS=3;
 export const SLIME_REMOVAL_GAIN=2;
 export const GUARD_SHIELD=2;
 export const HUMAN_ARMOR=3;
-export const NECROMANCER_GAIN=2;
+export const NECROMANCER_GAIN=3;
 export const SKELETON_GOLD=2;
 export const BONE_ATTACK_GAIN=3;
-export const GREATSWORD_COPY_GAIN=5;
+export const GREATSWORD_COPY_GAIN=8;
 export const WEREWOLF_RECRUIT_GAIN=1;
-const WIZARD_MAX_GAIN=4;
-export const wizardEntryGain=(spellCasts=0)=>Math.min(WIZARD_MAX_GAIN,1+spellCasts);
+export const wizardEntryGain=(spellCasts=0)=>1+spellCasts;
 export const eliteOrcEvolutionGain=(evolutionTriggers=0)=>1+evolutionTriggers;
 
 export const units = {
@@ -30,8 +29,8 @@ export const units = {
   medic: { name:'牧师', race:'human', hp:8, atk:1, text:'触发相邻友方单位的死亡时效果。' },
   king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。消灭所有相邻的友方骷髅。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
   page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'在商店被消灭时，获得'+SKELETON_GOLD+'金币。' },
-  orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'攻击力超过'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
-  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘其他友方亡灵被消灭时，永久+'+BONE_ATTACK_GAIN+'攻击。商店死亡时，使触发者永久+'+BONE_ATTACK_GAIN+'攻击。友方亡灵在战斗中阵亡时，本场+'+BONE_ATTACK_GAIN+'攻击。' },
+  orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'攻击力达到'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
+  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘友方亡灵被消灭时，使所有友方亡灵永久+'+BONE_ATTACK_GAIN+'攻击。友方亡灵阵亡时，使所有存活友方亡灵本场+'+BONE_ATTACK_GAIN+'攻击。' },
   soldier: { name:'士兵', race:'human', hp:6, atk:2, text:'使同盘其他友方人类永久+1生命。' },
   swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:'使相邻友方人类永久+'+SWORDSMAN_GAIN+'/+'+SWORDSMAN_GAIN+'。' },
   axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:'使相邻友方人类永久获得'+HUMAN_ARMOR+'初始护甲。死亡时，使其他友方人类获得'+HUMAN_ARMOR+'护甲。' },
@@ -39,17 +38,17 @@ export const units = {
   templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'死亡时，使其他友方人类获得+'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN+'。' },
   wizard: { name:'法师', race:'human', hp:7, atk:2, text:({spellCasts})=>{
     const gain=wizardEntryGain(spellCasts);
-    return '使相邻友方永久获得+'+gain+'/+'+gain+'。每施放一个法术，强化此效果（最高+'+WIZARD_MAX_GAIN+'/+'+WIZARD_MAX_GAIN+'）。';
+    return '使相邻友方永久获得+'+gain+'/+'+gain+'。每施放一个法术，强化此效果。每次摇盘可连锁触发。';
   } },
-  armoredOrc: { name:'重甲兽人', race:'orc', hp:24, atk:3, guardian:true, text:'与至少'+ORC_RIDER_NEIGHBORS+'名其他友方兽人相邻时，永久进化为兽人骑兵。' },
+  armoredOrc: { name:'重甲兽人', race:'orc', hp:24, atk:6, guardian:true, text:'与至少'+ORC_RIDER_NEIGHBORS+'名其他友方兽人相邻时，永久进化为兽人骑兵。' },
   slime: { name:'史莱姆', race:'monster', hp:6, atk:1, text:'在商店被移除时，使队伍中其余所有单位永久获得+'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。' },
-  orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:3, text:'攻击时额外连击一次。每击杀一个敌人，永久获得+1/+1。' },
+  orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:9, text:'攻击时额外连击一次。每击杀一个敌人，永久获得+1/+1。' },
   armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'死亡时，招来'+ARMORED_SKELETON_SPAWNS+'名骷髅兵。商店中永久入队并寻找空格上盘，战斗中立即召唤临时单位。' },
   bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:'招募时，随机获得1个法术。' },
-  greatswordSkeleton: { name:'大剑骷髅', race:'undead', hp:8, atk:3, text:'在商店被消灭时，复制自身并使复制永久获得+'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'。复制在下次摇盘时入队。' },
+  greatswordSkeleton: { name:'大剑骷髅', race:'undead', hp:8, atk:3, text:'在商店被消灭时，复制自身并使复制永久获得+'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'。下次摇盘或开战前入队。' },
   eliteOrc: { name:'精英兽人', race:'orc', hp:16, atk:4, text:({evolutionTriggers})=>{
     const gain=eliteOrcEvolutionGain(evolutionTriggers);
-    return '友方兽人进化时，使其永久获得+'+gain+'/+'+gain+'，并强化此效果。';
+    return '友方兽人进化时，使所有友方兽人永久获得+'+gain+'/+'+gain+'，并强化此效果。';
   } },
   werebear: { name:'熊人', race:'monster', hp:18, atk:3, text:'攻击时，获得等同于自身攻击力的护甲。' },
   werewolf: { name:'狼人', race:'monster', hp:8, atk:3, text:'你购买其他单位时，永久获得+'+WEREWOLF_RECRUIT_GAIN+'/+'+WEREWOLF_RECRUIT_GAIN+'。' },
@@ -64,10 +63,10 @@ export function unitEffectText(kind:Kind,context:UnitEffectContext={}){
 const unitPrices:Record<Kind,number>={
   guard:2,archer:3,medic:3,king:5,page:1,orc:3,bone:2,
   soldier:2,swordsman:3,axeman:3,lancer:3,templar:4,wizard:3,armoredOrc:5,slime:1,
-  orcRider:6,armoredSkeleton:4,bat:3,greatswordSkeleton:4,eliteOrc:5,werebear:5,werewolf:4,
+  orcRider:9,armoredSkeleton:4,bat:3,greatswordSkeleton:4,eliteOrc:5,werebear:5,werewolf:4,
 };
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];
-export const canEvolveOrc = (kind:Kind,attack:number) => kind==='orc'&&attack>ORC_ARMOR_THRESHOLD;
+export const canEvolveOrc = (kind:Kind,attack:number) => kind==='orc'&&attack>=ORC_ARMOR_THRESHOLD;
 export const RECRUIT_GAIN=3;
 export const spells = {
   'surge': {name:'魔力强化', price:3, text:'使相邻友方单位永久获得+2/+2。'},

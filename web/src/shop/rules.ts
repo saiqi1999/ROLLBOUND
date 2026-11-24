@@ -94,6 +94,13 @@ export const spinCost=(paidSpins:number)=>1+Math.floor(paidSpins/2);
 export const canSpin=(run:Run)=>run.phase==='shop'&&run.gold>=spinCost(run.shop.paidSpins)&&
   (run.roster.length+run.pendingRecruits.length+run.spells.length)>0;
 
+export function joinPendingRecruits(run:Run){
+  const waiting=run.pendingRecruits;
+  run.roster.push(...waiting);
+  run.pendingRecruits=[];
+  return waiting;
+}
+
 type Spin = {
   run:Run;
   board:ShopSlot[];
@@ -110,8 +117,10 @@ type Spin = {
 const name=(unit:UnitInstance)=>units[unit.kind].name;
 const unique=(ids:string[])=>[...new Set(ids)];
 const necromancerTargets=new Set<Kind>(['page','armoredSkeleton','bone','greatswordSkeleton']);
-const deathEffectKinds=new Set<Kind>(['armoredSkeleton','bone','axeman','templar']);
+const deathEffectKinds=new Set<Kind>(['armoredSkeleton','axeman','templar']);
 const human=(unit:UnitInstance)=>units[unit.kind].race==='human';
+const undead=(unit:UnitInstance)=>units[unit.kind].race==='undead';
+const orc=(unit:UnitInstance)=>units[unit.kind].race==='orc';
 
 function onBoard(spin:Spin,positions:Iterable<number>=spin.board.keys()){
   const found:UnitInstance[]=[];
@@ -187,7 +196,7 @@ function resolveSpell(spin:Spin,slot:SpellInstance,index:number){
   recordEffect(spin,spells[slot.kind].name+' · '+description,[...focus,...buffed],buffed);
 }
 
-function triggerShopDeath(spin:Spin,source:UnitInstance,activator:UnitInstance){
+function triggerShopDeath(spin:Spin,source:UnitInstance){
   if(!deathEffectKinds.has(source.kind))return;
   if(source.kind==='armoredSkeleton'){
     let placed=0;
@@ -195,10 +204,6 @@ function triggerShopDeath(spin:Spin,source:UnitInstance,activator:UnitInstance){
       if(spin.joined.has(addSpinUnit(spin,'page').id))placed++;
     }
     return {buffed:[],text:ARMORED_SKELETON_SPAWNS+' 名骷髅兵入队，'+placed+' 名入盘'};
-  }
-  if(source.kind==='bone'){
-    grantGrowth(activator,{attack:BONE_ATTACK_GAIN});
-    return {buffed:[activator.id],text:name(activator)+'永久 +'+BONE_ATTACK_GAIN+' 攻击'};
   }
   const allies=onBoard(spin).filter(unit=>unit.id!==source.id&&human(unit));
   const armor=source.kind==='axeman';
@@ -214,7 +219,7 @@ function resolvePriest(spin:Spin,source:UnitInstance,neighbors:UnitInstance[],pr
   for(const target of neighbors){
     const key=source.id+':'+target.id;
     if(spin.priestTriggers.has(key))continue;
-    const death=triggerShopDeath(spin,target,source);
+    const death=triggerShopDeath(spin,target);
     if(!death)continue;
     spin.priestTriggers.add(key);
     focus.push(target.id);
@@ -232,9 +237,9 @@ function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:st
     return slot?.type==='unit'&&necromancerTargets.has(slot.kind);
   });
   if(!targets.length)return;
-  const removed:string[]=[],names:string[]=[],archers:string[]=[],rewards:string[]=[];
+  const removed:string[]=[],names:string[]=[],rewards:string[]=[];
   const buffed=[source.id];
-  let gold=0;
+  let gold=0,archerTriggers=0;
   for(const targetIndex of targets){
     const slot=board[targetIndex]!;
     const victim=detachShopUnit(run,slot.id);
@@ -251,28 +256,32 @@ function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:st
       const copy={...victim,id:nextUnitId(run)};
       grantGrowth(copy,{attack:GREATSWORD_COPY_GAIN,health:GREATSWORD_COPY_GAIN});
       run.pendingRecruits.push(copy);
-      rewards.push(name(copy)+'的复制永久 +'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'，下次摇盘入队');
+      rewards.push(name(copy)+'的复制永久 +'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'，下次摇盘或开战前入队');
     }else{
-      const death=triggerShopDeath(spin,victim,source);
+      const death=triggerShopDeath(spin,victim);
       if(death){
         rewards.push(death.text);
         buffed.push(...death.buffed);
       }
     }
-    for(const archer of onBoard(spin).filter(unit=>unit.kind==='bone')){
-      if(grantLinkGrowth(spin,archer,'bone',{attack:BONE_ATTACK_GAIN}))archers.push(archer.id);
+    const archers=onBoard(spin).filter(unit=>unit.kind==='bone').length;
+    if(archers){
+      archerTriggers+=archers;
+      for(const ally of run.roster.filter(undead)){
+        grantGrowth(ally,{attack:archers*BONE_ATTACK_GAIN});
+        buffed.push(ally.id);
+      }
     }
   }
   if(!removed.length)return;
-  const survivingArchers=archers.filter(id=>spin.units.has(id));
-  buffed.push(...survivingArchers);
+  const survivingBuffs=buffed.filter(id=>spin.units.has(id));
   const gain=removed.length*NECROMANCER_GAIN;
   const details=[
     '消灭'+names.join('、'),'永久 +'+gain+'/+'+gain,
     ...(gold?['金币 +'+gold]:[]),...rewards,
-    ...(survivingArchers.length?['在盘骷髅弓箭手永久 +'+BONE_ATTACK_GAIN+' 攻击']:[]),
+    ...(archerTriggers?['骷髅弓箭手触发 '+archerTriggers+' 次，使友方亡灵永久加攻']:[]),
   ];
-  recordEffect(spin,prefix+name(source)+' · '+details.join(' · ')+'。',[...buffed,...removed],buffed);
+  recordEffect(spin,prefix+name(source)+' · '+details.join(' · ')+'。',[...survivingBuffs,...removed],survivingBuffs);
 }
 
 function resolveLink(spin:Spin,source:UnitInstance,index:number,prefix:string){
@@ -312,8 +321,10 @@ function resolveLink(spin:Spin,source:UnitInstance,index:number,prefix:string){
       if(positions.some(slot=>!board[slot]))buff({attack:2,health:1},[source],'相邻有空格，永久 +2/+1。');
       break;
     case 'wizard':{
+      if(!neighbors.length)break;
       const gain=wizardEntryGain(run.spellCasts);
-      buff({attack:gain,health:gain},neighbors,'相邻友方永久 +'+gain+'/+'+gain+'。');
+      for(const unit of neighbors)grantGrowth(unit,{attack:gain,health:gain});
+      announce('相邻友方永久 +'+gain+'/+'+gain+'。',neighbors,neighbors);
       break;
     }
   }
@@ -334,45 +345,54 @@ function resolvePendingLinks(spin:Spin){
 }
 
 export function resolveEvolutions(run:Run,spin?:Spin){
-  const onWheel=spin?onBoard(spin):[];
+  const orcs=run.roster.filter(orc);
+  if(!orcs.length)return;
+  const onWheel=spin?onBoard(spin).filter(orc):[];
   const wheelIds=new Set(onWheel.map(unit=>unit.id));
-  const order=[...onWheel,...run.roster.filter(unit=>!wheelIds.has(unit.id))];
-  const elites=run.roster.filter(unit=>unit.kind==='eliteOrc');
-  for(const unit of order){
-    if(spin?.evolved.has(unit.id))continue;
-    const attack=unitStats(unit).attack;
-    const board=spin?.board??run.shop.board;
-    const slot=board.findIndex(symbol=>symbol?.id===unit.id);
-    const nearby=spin&&slot>=0?onBoard(spin,neighborSlots(slot)).filter(other=>units[other.kind].race==='orc'):[];
-    const next=canEvolveOrc(unit.kind,attack)?'armoredOrc':
-      unit.kind==='armoredOrc'&&nearby.length>=ORC_RIDER_NEIGHBORS?'orcRider':undefined;
-    if(!next)continue;
-    const original=name(unit);
-    unit.kind=next;
-    let gain=0;
-    for(const elite of elites){
-      const triggers=elite.evolutionTriggers??0;
-      gain+=eliteOrcEvolutionGain(triggers);
-      elite.evolutionTriggers=triggers+1;
+  const order=[...onWheel,...orcs.filter(unit=>!wheelIds.has(unit.id))];
+  const elites=orcs.filter(unit=>unit.kind==='eliteOrc');
+  const board=spin?.board??run.shop.board;
+  let buffedTeam:boolean;
+  do{
+    buffedTeam=false;
+    for(const unit of order){
+      if(spin?.evolved.has(unit.id))continue;
+      if(unit.kind!=='orc'&&unit.kind!=='armoredOrc')continue;
+      const slot=board.findIndex(symbol=>symbol?.id===unit.id);
+      const nearby=spin&&slot>=0&&unit.kind==='armoredOrc'?onBoard(spin,neighborSlots(slot)).filter(orc):[];
+      const next=canEvolveOrc(unit.kind,unitStats(unit).attack)?'armoredOrc':
+        nearby.length>=ORC_RIDER_NEIGHBORS?'orcRider':undefined;
+      if(!next)continue;
+      const original=name(unit);
+      unit.kind=next;
+      let gain=0;
+      for(const elite of elites){
+        const triggers=elite.evolutionTriggers??0;
+        gain+=eliteOrcEvolutionGain(triggers);
+        elite.evolutionTriggers=triggers+1;
+      }
+      if(gain){
+        for(const ally of orcs)grantGrowth(ally,{attack:gain,health:gain});
+        buffedTeam=true;
+      }
+      if(spin){
+        spin.evolved.add(unit.id);
+        if(slot>=0)writeSpinSlot(spin,slot,unitSlot(unit));
+        const text=original+'永久进化为'+name(unit)+'。'+(gain?'所有友方兽人永久 +'+gain+'/+'+gain+'。':'');
+        const buffed=gain?orcs.map(ally=>ally.id):[unit.id];
+        recordEffect(spin,text,[...buffed,...nearby.map(other=>other.id)],buffed);
+      }else if(slot>=0){
+        board[slot]=unitSlot(unit);
+      }
     }
-    if(gain)grantGrowth(unit,{attack:gain,health:gain});
-    if(spin){
-      spin.evolved.add(unit.id);
-      if(slot>=0)writeSpinSlot(spin,slot,unitSlot(unit));
-      const text=original+'永久进化为'+name(unit)+'。'+(gain?'精英兽人使其永久获得+'+gain+'/+'+gain+'。':'');
-      recordEffect(spin,text,[unit.id,...[...nearby,...elites].map(other=>other.id)],[unit.id]);
-    }else if(slot>=0){
-      board[slot]=unitSlot(unit);
-    }
-  }
+    // An elite can make an earlier Orc reach its threshold during this pass.
+  }while(buffedTeam);
 }
 
 export function resolveSpin(run:Run){
   if(!canSpin(run))return;
   run.gold-=spinCost(run.shop.paidSpins);
-  const waiting=run.pendingRecruits;
-  run.roster.push(...waiting);
-  run.pendingRecruits=[];
+  const waiting=joinPendingRecruits(run);
   const seed=(run.seed^Math.imul(run.stage+1,0xb4b82e39)^Math.imul(++run.shop.paidSpins,0x7f4a7c15))>>>0;
   const {board,positioned}=drawPaidShopBoard(run.roster,run.spells,{rng:seed});
   const drawn=wheelFrame(board,run.roster);

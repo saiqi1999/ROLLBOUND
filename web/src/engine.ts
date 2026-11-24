@@ -2,7 +2,7 @@ import {encounters} from './data.ts';
 import {createBattle} from './battle/resolve.ts';
 import type {Battle,BattleWindow,Outcome} from './battle/model.ts';
 import type {ShopState,SpellInstance,UnitInstance} from './shop/model.ts';
-import {createShop} from './shop/rules.ts';
+import {createShop,joinPendingRecruits} from './shop/rules.ts';
 import {applyShopEndTags} from './shop/tags.ts';
 import {addTag,type TagInventory} from './magic-tags.ts';
 import {COMBAT_TICK_MS} from './timing.ts';
@@ -27,7 +27,7 @@ export function newRun(seed:number):Run{
 }
 
 export function canStartBattle(run:Run){
-  return run.phase==='shop'&&run.roster.length>0;
+  return run.phase==='shop'&&(run.roster.length+run.pendingRecruits.length)>0;
 }
 
 export function earnedRemovalMarker(stage:number,result:Outcome|undefined){
@@ -36,6 +36,7 @@ export function earnedRemovalMarker(stage:number,result:Outcome|undefined){
 
 export function startBattle(run:Run){
   if(!canStartBattle(run))return false;
+  joinPendingRecruits(run);
   applyShopEndTags(run);
   const encounter=encounters[run.stage];
   const seed=(run.seed^Math.imul(run.stage+1,2654435761))>>>0;

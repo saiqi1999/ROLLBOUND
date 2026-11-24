@@ -83,17 +83,17 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   const count=run.roster.length;
   const ready=canStartBattle(run);
   const recruitsWaiting=run.pendingRecruits.length;
-  const awaitingSpin=recruitsWaiting>0&&canSpin(run);
-  const stranded=!ready&&!awaitingSpin&&!run.shop.offers.some(offer=>
+  const deployedCount=count+recruitsWaiting;
+  const stranded=!ready&&!run.shop.offers.some(offer=>
     offer.type==='unit'&&!offer.sold&&offer.price<=run.gold)&&run.gold<=REFRESH_COST;
   const fight=root.querySelector<HTMLButtonElement>('[data-act="fight"]')!;
   fight.disabled=spinning||!ready;
   fight.hidden=stranded;
   root.querySelector<HTMLButtonElement>('[data-act="reset"]')!.hidden=!stranded;
   root.querySelector('#departure-note')!.textContent=stranded?'余款不足以招募，可重新开局。':
-    ready?'随机首发 '+Math.min(count,FIELD_LIMIT)+' · 候补 '+Math.max(0,count-FIELD_LIMIT):
-    awaitingSpin?'摇盘后，待入队单位可出战。':'招募至少 1 名单位后开战。';
-  const growing=run.roster.filter(unit=>unit.tag==='growth').length;
+    ready?'随机首发 '+Math.min(deployedCount,FIELD_LIMIT)+' · 候补 '+Math.max(0,deployedCount-FIELD_LIMIT):
+    '招募至少 1 名单位后开战。';
+  const growing=[...run.roster,...run.pendingRecruits].filter(unit=>unit.tag==='growth').length;
   root.querySelector('#departure-growth')!.textContent=growing?
     growing+' 名单位开战前永久 +'+GROWTH_TAG_GAIN+'/+'+GROWTH_TAG_GAIN:'';
   root.querySelector('#shop-roster')!.innerHTML='<h3>我的阵容 <small>'+count+' 名</small></h3>'+lineupExport+
@@ -111,7 +111,7 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
     (symbols===0?'招募单位或购买法术后可摇盘。':
       run.gold<cost?'还差 '+(cost-run.gold)+' 金。':'可抽取 '+symbols+' 个符号'+
         (offWheel?' · 盘外 '+offWheel+' 名':'')+' · 下次 '+spinCost(run.shop.paidSpins+1)+' 金')+
-    (recruitsWaiting?' · 下次摇盘入队 '+recruitsWaiting+' 名':'');
+    (recruitsWaiting?' · '+recruitsWaiting+' 名将在下次摇盘或开战前入队':'');
 }
 
 export function paintSpinSummary(root:HTMLElement,run:Run){
