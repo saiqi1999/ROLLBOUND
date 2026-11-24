@@ -356,7 +356,7 @@ test('simultaneous strikes and movement share one fixed playback beat',()=>{
   assert.deepEqual(frames.flatMap(frame=>frame.moments),result.events);
 });
 
-test('each living undead archer buffs all surviving friendly undead after each death',()=>{
+test('each active skeleton archer gains four attack for each allied undead death',()=>{
   const {battle}=scenario([['bone'],['bone'],['page'],['page'],['king'],['guard'],['greatswordSkeleton']],[['orc']]);
   const [archer,other,first,second,king,human,reserve,enemy]=battle.units;
   reserve.field=false;
@@ -365,8 +365,34 @@ test('each living undead archer buffs all surviving friendly undead after each d
   const effects=createEffects(battle,()=>{});
   effects.attack(enemy,[first]);
   effects.attack(enemy,[second]);
-  assert.deepEqual([archer,other,king,reserve,human,enemy].map(currentAttack),[14,14,15,15,2,3]);
-  assert.deepEqual([first,second].map(currentAttack),[1,7]);
+  assert.deepEqual([archer,other,king,reserve,human,enemy].map(currentAttack),[10,10,3,3,2,3]);
+  assert.deepEqual([first,second].map(currentAttack),[1,1]);
+});
+
+test('fel deaths grow surviving allies, trigger the archer and award one saved tag once',()=>{
+  const run=scenario([['felSquire'],['felGuard'],['bone'],['guard']],[['orc']]);
+  const {battle}=run;
+  const [squire,felGuard,archer,reserve,enemy]=battle.units;
+  reserve.field=false;
+  delete battle.runtime.actors[reserve.id];
+  battle.reserves[0].push(reserve.id);
+  enemy.bonus=40;
+  const effects=createEffects(battle,()=>{});
+  effects.attack(enemy,[squire,felGuard]);
+  assert.deepEqual([archer,reserve,enemy].map(currentAttack),[13,5,43]);
+  assert.deepEqual([archer,reserve,enemy].map(maxHealth),[10,15,10]);
+  assert.equal(tagCount(run.tagInventory),0);
+  assert.equal(battle.tagRewards.length,1);
+  const [reward]=battle.tagRewards;
+
+  enemy.hp=0;
+  const settled=simulateBattleWindow(JSON.parse(JSON.stringify(battle)));
+  assert.equal(settled.outcome,'胜利');
+  assert.ok(commitBattleWindow(run,settled));
+  assert.equal(tagCount(run.tagInventory,reward),1);
+  assert.equal(commitBattleWindow(run,settled),false);
+  assert.equal(tagCount(run.tagInventory),1);
+  assert.equal(run.roster.find(unit=>unit.id===archer.id).gainedAttack,0);
 });
 
 test('the adventure can progress seven times with one grant per shop and three even-win removal marks',()=>{

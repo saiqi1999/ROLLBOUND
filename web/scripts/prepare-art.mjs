@@ -12,7 +12,33 @@ const names={
   soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
   armoredOrc:'Armored Orc',slime:'Slime',orcRider:'Orc rider',armoredSkeleton:'Armored Skeleton',bat:'Bat',
   greatswordSkeleton:'Greatsword Skeleton',eliteOrc:'Elite Orc',werebear:'Werebear',werewolf:'Werewolf',
+  warlock:'Warlock',felSquire:'Black Knight_A',felGuard:'Black Knight_B',
 };
+const felUnits=new Set(['warlock','felSquire','felGuard']);
+const warlockRobe=new Map([
+  [0x321717,0x2f193c],[0x52122f,0x492060],[0x6e1d33,0x662984],
+  [0x8e2b34,0x80389b],[0x972f34,0x8f47b2],[0xa6483a,0xa35bbf],
+  [0x44373d,0x45364f],[0x5b4b53,0x60486e],[0x7b6a6b,0x826192],[0x8d8080,0x9b7bb0],
+]);
+
+function applyFelPalette(png,id){
+  for(let index=0;index<png.data.length;index+=4){
+    const [r,g,b,a]=png.data.subarray(index,index+4);
+    if(!a)continue;
+    const robe=id==='warlock'?warlockRobe.get(r<<16|g<<8|b):undefined;
+    if(robe!==undefined){
+      png.data[index]=robe>>16;
+      png.data[index+1]=(robe>>8)&255;
+      png.data[index+2]=robe&255;
+      continue;
+    }
+    // Remap warm accents while retaining neutral outlines, metal, and ground shadows.
+    if(r-g<16||r-b<16||g>r*.89)continue;
+    png.data[index]=Math.round(r*.23+g*.58);
+    png.data[index+1]=Math.min(255,Math.round(r*.94+g*.15));
+    png.data[index+2]=Math.round(r*.24+g*.21+b*.18);
+  }
+}
 const manifest={};
 const battleSheets={};
 async function writeBattleSheet(key,bytes){
@@ -24,16 +50,18 @@ for(const [id,name] of Object.entries(names)){
   manifest[id]={};
   const idle=id==='bat'?'Flying':'Idle';
   const walk=id==='bat'?'Flying':['lancer','templar'].includes(id)?'Walk01':'Walk';
-  for(const [move,suffix] of Object.entries({idle,walk,attack:['medic','bone'].includes(id)?'Attack':'Attack01',death:id==='king'?'DEATH':'Death'})){
+  const attack=id==='warlock'?'Attack02':['medic','bone'].includes(id)?'Attack':'Attack01';
+  for(const [move,suffix] of Object.entries({idle,walk,attack,death:id==='king'?'DEATH':'Death'})){
     const src=PNG.sync.read(await readFile(path.join(root,name,name+' with shadows',name+'_'+suffix+'.png')));
     if(src.height!==100||src.width%100)throw Error('Invalid sheet: '+name+' '+move);
+    if(felUnits.has(id))applyFelPalette(src,id);
     const count=src.width/100, frame=80;
     const sheet=new PNG({width:frame*count,height:64});
     for(let i=0;i<count;i++)PNG.bitblt(src,sheet,100*i+10,6,80,64,i*frame,0);
     await writeBattleSheet(id+'-'+move,PNG.sync.write(sheet));
     manifest[id][move]=count;
     if(move==='idle'){
-      const height=id==='lancer'?44:36;
+      const height=id==='lancer'||id==='felSquire'?44:36;
       const left=id==='greatswordSkeleton'?24:30;
       const badge=new PNG({width:40,height});
       PNG.bitblt(src,badge,left,62-height,40,height,0,0);

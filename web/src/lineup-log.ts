@@ -4,7 +4,7 @@ import {currentAttack,maxHealth} from './battle/unit-state.ts';
 import type {Kind} from './data.ts';
 import type {AppliedTag} from './magic-tags.ts';
 
-export const BATTLE_RULESET=2;
+export const BATTLE_RULESET=3;
 const outcomes={胜利:'win',落败:'loss',平局:'draw'} as const;
 const ruleset1Attack:Partial<Record<Kind,number>>={armoredOrc:3,orcRider:3};
 

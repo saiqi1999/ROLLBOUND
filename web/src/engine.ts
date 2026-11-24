@@ -72,6 +72,7 @@ function finishBattle(run:Run,battle:Battle,outcome:Outcome){
     unit.gainedHealth=result.healthBonus;
   }
   run.results.push(outcome);
+  for(const tag of battle.tagRewards??[])addTag(run.tagInventory,tag);
   if(earnedRemovalMarker(run.stage,outcome))addTag(run.tagInventory,'remove');
   run.phase=outcome==='胜利'?'result':'end';
 }

@@ -1,5 +1,5 @@
-import {ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,GUARD_SHIELD,HUMAN_ARMOR,TEMPLAR_DEATH_GAIN,units} from '../data.ts';
-import {teamTagGain} from '../magic-tags.ts';
+import {ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,FEL_SQUIRE_GAIN,GUARD_SHIELD,HUMAN_ARMOR,TEMPLAR_DEATH_GAIN,hasRace,units} from '../data.ts';
+import {magicTags,tagIds,teamTagGain} from '../magic-tags.ts';
 import {deployUnit,interruptActor} from './combat.ts';
 import type {Battle,RecordMoment,Unit} from './model.ts';
 import {pick} from './random.ts';
@@ -18,7 +18,7 @@ function applyDamage(target:Unit,damage:number){
 
 export function createEffects(battle:Battle,record:RecordMoment){
   const humanAllies=(source:Unit)=>battle.units.filter(other=>
-    other.side===source.side&&units[other.kind].race==='human'&&deployed(other));
+    other.side===source.side&&hasRace(other.kind,'human')&&deployed(other));
 
   function buff(
     phase:'阵亡'|'攻击',source:Unit,targets:Unit[],description:string,value:string,action?:'empower',
@@ -68,13 +68,21 @@ export function createEffects(battle:Battle,record:RecordMoment){
       const gain='+'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN;
       buff('阵亡',unit,allies,'使其他在场友方人类本场 '+gain+'。',gain,'empower');
     }
-    if(units[unit.kind].race==='undead'){
-      const allies=battle.units.filter(other=>other.side===unit.side&&units[other.kind].race==='undead'&&other.hp>0);
-      const gain=allies.filter(other=>other.kind==='bone'&&deployed(other)).length*BONE_ATTACK_GAIN;
-      if(gain){
-        for(const ally of allies)grantBattleStats(ally,gain,0);
-        buff('阵亡',unit,allies,'触发骷髅弓箭手，使存活友方亡灵本场 +'+gain+' 攻击。','+'+gain+' 攻','empower');
-      }
+    if(unit.kind==='felSquire'){
+      const allies=battle.units.filter(other=>other.side===unit.side&&other.hp>0);
+      for(const ally of allies)grantBattleStats(ally,FEL_SQUIRE_GAIN,FEL_SQUIRE_GAIN);
+      const gain='+'+FEL_SQUIRE_GAIN+'/+'+FEL_SQUIRE_GAIN;
+      buff('阵亡',unit,allies,'使存活友方本场 '+gain+'。',gain,'empower');
+    }
+    if(unit.kind==='felGuard'&&unit.side===0){
+      const tag=pick(tagIds,battle.runtime.effectRandom);
+      (battle.tagRewards??=[]).push(tag);
+      record('阵亡',label(unit)+'使你获得'+magicTags[tag].name+'标签。',[unit.id],{source:unit.id});
+    }
+    if(hasRace(unit.kind,'undead')){
+      const archers=battle.units.filter(other=>other.side===unit.side&&other.kind==='bone'&&deployed(other));
+      for(const archer of archers)grantBattleStats(archer,BONE_ATTACK_GAIN,0);
+      buff('阵亡',unit,archers,'使在场友方骷髅弓箭手各自获得 +'+BONE_ATTACK_GAIN+' 攻击。','+'+BONE_ATTACK_GAIN+' 攻','empower');
     }
     if(unit.kind==='armoredSkeleton')spawnSummonedUnits(unit);
   }

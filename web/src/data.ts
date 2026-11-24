@@ -4,7 +4,7 @@ export const races = {human:'人类', orc:'兽人', undead:'亡灵', monster:'�
 type Race = keyof typeof races;
 type UnitEffectContext = {spellCasts?:number;evolutionTriggers?:number};
 type UnitDefinition = {
-  name:string;race:Race;hp:number;atk:number;text:string|((context:UnitEffectContext)=>string);guardian?:true;
+  name:string;race:Race|readonly Race[];hp:number;atk:number;text:string|((context:UnitEffectContext)=>string);guardian?:true;
 };
 
 export const TEMPLAR_DEATH_GAIN=4;
@@ -16,8 +16,9 @@ export const SLIME_REMOVAL_GAIN=2;
 export const GUARD_SHIELD=2;
 export const HUMAN_ARMOR=3;
 export const NECROMANCER_GAIN=3;
-export const SKELETON_GOLD=2;
-export const BONE_ATTACK_GAIN=3;
+export const NECROMANCER_GOLD=2;
+export const BONE_ATTACK_GAIN=4;
+export const FEL_SQUIRE_GAIN=3;
 export const GREATSWORD_COPY_GAIN=8;
 export const WEREWOLF_RECRUIT_GAIN=1;
 export const wizardEntryGain=(spellCasts=0)=>1+spellCasts;
@@ -27,10 +28,10 @@ export const units = {
   guard: { name:'木盾卫士', race:'human', hp:12, atk:2, text:'攻击时，获得'+GUARD_SHIELD+'护盾。' },
   archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:'与守护单位相邻时，永久获得+1攻击。' },
   medic: { name:'牧师', race:'human', hp:8, atk:1, text:'触发相邻友方单位的死亡时效果。' },
-  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。消灭所有相邻的友方骷髅。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'。' },
-  page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'在商店被消灭时，获得'+SKELETON_GOLD+'金币。' },
+  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。消灭相邻的友方亡灵（亡灵法师除外）。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'和'+NECROMANCER_GOLD+'金币。' },
+  page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'' },
   orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'攻击力达到'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
-  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'同盘友方亡灵被消灭时，使所有友方亡灵永久+'+BONE_ATTACK_GAIN+'攻击。友方亡灵阵亡时，使所有存活友方亡灵本场+'+BONE_ATTACK_GAIN+'攻击。' },
+  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'友方亡灵死亡时，本单位获得+'+BONE_ATTACK_GAIN+'攻击力。' },
   soldier: { name:'士兵', race:'human', hp:6, atk:2, text:'使同盘其他友方人类永久+1生命。' },
   swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:'使相邻友方人类永久+'+SWORDSMAN_GAIN+'/+'+SWORDSMAN_GAIN+'。' },
   axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:'使相邻友方人类永久获得'+HUMAN_ARMOR+'初始护甲。死亡时，使其他友方人类获得'+HUMAN_ARMOR+'护甲。' },
@@ -52,19 +53,29 @@ export const units = {
   } },
   werebear: { name:'熊人', race:'monster', hp:18, atk:3, text:'攻击时，获得等同于自身攻击力的护甲。' },
   werewolf: { name:'狼人', race:'monster', hp:8, atk:3, text:'你购买其他单位时，永久获得+'+WEREWOLF_RECRUIT_GAIN+'/+'+WEREWOLF_RECRUIT_GAIN+'。' },
+  warlock: { name:'术士', race:'orc', hp:10, atk:3, text:'使相邻的兽人进化为邪能侍从，重甲兽人进化为邪能守卫。' },
+  felSquire: { name:'邪能侍从', race:['orc','undead'], hp:10, atk:3, text:'死亡时，使所有友方单位获得+'+FEL_SQUIRE_GAIN+'/+'+FEL_SQUIRE_GAIN+'。' },
+  felGuard: { name:'邪能守卫', race:['orc','undead'], hp:24, atk:6, text:'死亡时，随机获得1枚标签。' },
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
 export const unitKinds=Object.keys(units) as Kind[];
-export const humanKinds=unitKinds.filter(kind=>units[kind].race==='human');
+export function unitRaces(kind:Kind):readonly Race[]{
+  const {race}=units[kind];
+  return typeof race==='string'?[race]:race;
+}
+export const hasRace=(kind:Kind,race:Race)=>unitRaces(kind).includes(race);
+export const humanKinds=unitKinds.filter(kind=>hasRace(kind,'human'));
 export function unitEffectText(kind:Kind,context:UnitEffectContext={}){
   const {text}=units[kind];
   return typeof text==='function'?text(context):text;
 }
-const unitPrices:Record<Kind,number>={
+type ShopKind=Exclude<Kind,'felSquire'|'felGuard'>;
+const unitPrices:Record<ShopKind,number>={
   guard:2,archer:3,medic:3,king:5,page:1,orc:3,bone:2,
   soldier:2,swordsman:3,axeman:3,lancer:3,templar:4,wizard:3,armoredOrc:5,slime:1,
-  orcRider:9,armoredSkeleton:4,bat:3,greatswordSkeleton:4,eliteOrc:5,werebear:5,werewolf:4,
+  orcRider:9,armoredSkeleton:4,bat:3,greatswordSkeleton:4,eliteOrc:5,werebear:5,werewolf:4,warlock:5,
 };
+export const shopKinds=unitKinds.filter((kind):kind is ShopKind=>Object.hasOwn(unitPrices,kind));
 export const hasGuardian = (kind:Kind) => 'guardian' in units[kind];
 export const canEvolveOrc = (kind:Kind,attack:number) => kind==='orc'&&attack>=ORC_ARMOR_THRESHOLD;
 export const RECRUIT_GAIN=3;
@@ -76,7 +87,7 @@ export const spells = {
 export type SpellKind = keyof typeof spells;
 export const spellKinds=Object.keys(spells) as SpellKind[];
 type OfferBase = {title:string;price:number;sold:boolean};
-type UnitOffer = OfferBase&{type:'unit';kinds:[Kind,...Kind[]]};
+type UnitOffer = OfferBase&{type:'unit';kinds:[ShopKind,...Kind[]]};
 export type Offer = UnitOffer
   | OfferBase&{type:'spell';spell:SpellKind}
   | OfferBase&{type:'tag';tag:TagId};
@@ -121,8 +132,8 @@ export const encounters: {name:string; camp:string; units:Kind[]; health:number;
 ];
 export const REFRESH_COST = 1;
 export const REQUIRED_WINS = encounters.length;
-export function unitOffer(kind:Kind):UnitOffer {
-  const kinds:[Kind,...Kind[]]=[kind];
+export function unitOffer(kind:ShopKind):UnitOffer {
+  const kinds:[ShopKind,...Kind[]]=[kind];
   if(kind==='king')kinds.push('page','page');
   return {type:'unit',kinds,price:unitPrices[kind],title:units[kind].name,sold:false};
 }

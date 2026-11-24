@@ -1,5 +1,5 @@
 import type {Kind} from '../data.ts';
-import type {AppliedTag} from '../magic-tags.ts';
+import type {AppliedTag,TagId} from '../magic-tags.ts';
 import type {OpeningSpell,UnitInstance} from '../shop/model.ts';
 
 export type Point = {x:number;y:number};
@@ -39,6 +39,7 @@ export type Battle = {
   units:Unit[];
   reserves:[string[],string[]];
   recruitedDeaths:[number,number];
+  tagRewards?:TagId[];
   openingResolved:boolean;
   openingSpells:OpeningSpell[];
   runtime:CombatRuntime;
@@ -79,7 +80,7 @@ const overrides:Partial<Record<Kind,Partial<typeof melee>>>={
 };
 
 export function profile(kind:Kind){
-  const base=kind==='archer'||kind==='bone'||kind==='wizard'||kind==='medic'||kind==='king'?ranged:melee;
+  const base=kind==='archer'||kind==='bone'||kind==='wizard'||kind==='medic'||kind==='king'||kind==='warlock'?ranged:melee;
   return overrides[kind]?{...base,...overrides[kind]}:base;
 }
 

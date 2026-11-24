@@ -1,6 +1,6 @@
 import {encounters,REQUIRED_WINS} from '../data.ts';
 import {earnedRemovalMarker,type Run} from '../engine.ts';
-import {tagCount} from '../magic-tags.ts';
+import {magicTags,tagCount,type TagId} from '../magic-tags.ts';
 import {deployed} from '../battle/unit-state.ts';
 import type {Battle} from '../battle/model.ts';
 import {scenery} from '../landscape.ts';
@@ -50,8 +50,11 @@ export function renderResult(root:HTMLElement,run:Run){
     '<p>本场阵亡 '+battle.units.filter(unit=>unit.side===0&&unit.hp<=0).length+' 名</p>'+
     '<div class="review"><button data-act="log">查看战报</button><label>从 <select id="review-window">'+run.history.map((frame,index)=>
       '<option value="'+index+'">'+seconds(frame)+'</option>').join('')+'</select> 回看</label><button data-act="replay">播放</button></div>':'';
-  const reward=nextShop&&earnedRemovalMarker(run.stage,result)?
-    '<p class="tag-reward">获得 1 枚移除标签 · 当前持有 '+tagCount(run.tagInventory,'remove')+' 枚</p>':'';
+  const rewards=new Map<TagId,number>();
+  for(const tag of battle?.tagRewards??[])rewards.set(tag,(rewards.get(tag)??0)+1);
+  if(nextShop&&earnedRemovalMarker(run.stage,result))rewards.set('remove',(rewards.get('remove')??0)+1);
+  const reward=rewards.size?'<p class="tag-reward">获得 '+[...rewards].map(([tag,count])=>
+    magicTags[tag].name+'标签 ×'+count+'（持有 '+tagCount(run.tagInventory,tag)+'）').join(' · ')+'</p>':'';
   const roster=[...new Set(run.roster.map(unit=>unit.kind))].map(kind=>art(kind)).join('');
   const score=run.results.map((value,index)=>'<div><small>'+encounters[index].name+'</small><b>'+value+'</b></div>').join('');
   root.innerHTML=header(run)+'<section class="results"><div class="kicker">第 '+(lastStage+1)+' 战 · '+encounters[lastStage].name+

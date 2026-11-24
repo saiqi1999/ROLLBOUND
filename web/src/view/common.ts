@@ -1,4 +1,4 @@
-import {encounters,hasGuardian,races,units,type Kind,type SpellKind} from '../data.ts';
+import {encounters,hasGuardian,races,unitRaces,type Kind,type SpellKind} from '../data.ts';
 import type {Run} from '../engine.ts';
 import {magicTags,type TagId} from '../magic-tags.ts';
 import {lineupLogging} from '../lineup-client.ts';
@@ -16,17 +16,23 @@ export const lineupExport=lineupLogging?
   '<a class="lineup-export" href="./api/battle-lineups" download>导出阵容日志</a>':'';
 
 export function unitTags(kind:Kind,temporary=false){
-  return '<span class="unit-tags">'+races[units[kind].race]+(hasGuardian(kind)?' · 守护':'')+
+  return '<span class="unit-tags">'+unitRaces(kind).map(race=>races[race]).join(' + ')+(hasGuardian(kind)?' · 守护':'')+
     (temporary?' · 临时':'')+'</span>';
 }
 
-export function header(run:Run){
+export function header(run:Run,view:'route'|'shop'='route'){
+  const brand='<div class="brand"><span class="brandmark" aria-hidden="true">◆</span><div><strong>ROLLBOUND</strong>'+
+    '<small>轮盘战记</small></div></div>';
+  const rules='<button class="quiet iconbtn" data-act="rules" aria-label="玩法说明">?</button>';
+  if(view==='shop'){
+    return '<header class="shop-header">'+brand+'<div class="shop-hud"><span class="shop-round">第 '+(run.stage+1)+
+      ' / '+encounters.length+' 轮</span><span class="purse">'+coin+'<strong id="shop-gold">'+run.gold+
+      '</strong><span class="sr-only">金币</span></span></div>'+rules+'</header>';
+  }
   const route=encounters.map((encounter,index)=>
     '<span class="'+(index===run.stage?'now':index<run.stage?'past':'')+'" title="'+encounter.name+
     '"'+(run.stage===index?' aria-current="step"':'')+'><b data-total="'+encounters.length+'">0'+(index+1)+
     '</b><em>'+encounter.camp+'</em></span>',
   ).join('');
-  return '<header><div class="brand"><span class="brandmark" aria-hidden="true">◆</span><div><strong>ROLLBOUND</strong>'+
-    '<small>轮盘战记</small></div></div><nav aria-label="旅程">'+route+
-    '</nav><button class="quiet iconbtn" data-act="rules" aria-label="玩法说明">?</button></header>';
+  return '<header>'+brand+'<nav aria-label="旅程">'+route+'</nav>'+rules+'</header>';
 }

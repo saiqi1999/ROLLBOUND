@@ -12,7 +12,7 @@ import {loadRun,saveRun} from './save.ts';
 import {flushLineupLogs,queueLineup,startLineupLog} from './lineup-client.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
-import {changeShopPane,paintShopBoard,paintShopControls,paintSpinSummary,renderShop,type ShopPane} from './view/shop.ts';
+import {paintShopBoard,paintShopControls,paintSpinSummary,renderShop} from './view/shop.ts';
 import {renderTags,slimeRemovalBenefit,tagDetails,type TagSelection} from './view/tags.ts';
 import {paintBattle,renderBattle,renderResult} from './view/battle.ts';
 import type * as Arena from './arena.ts';
@@ -22,7 +22,7 @@ const dialog=document.querySelector<HTMLDialogElement>('#detail')!;
 const getSeed=()=>crypto.getRandomValues(new Uint32Array(1))[0];
 const loaded=loadRun();
 let run:Run=loaded??newRun(getSeed());
-let shopPane:ShopPane='wheel',spinController:AbortController|undefined;
+let spinController:AbortController|undefined;
 let tagsOpen=false,tagSelection:TagSelection={notice:''};
 let arena:typeof Arena|undefined,arenaReady=false,arenaToken=0,arenaWait=0;
 let timer=0,startedAt=0,remaining=0,paused=false,speed=1;
@@ -52,7 +52,7 @@ dialog.addEventListener('close',()=>{
 
 const ruleText='<p>七店七战，落败或平局结束远征。每间商店发放金币，余额结转。第 2、4、6 战获胜各得 1 枚移除标签。</p>'+
   '<p>货架每次提供三名单位，第四格各有一半概率出法术或魔法标签。刷新花费 1 金。每店摇盘依次花费 1、1、2、2、3、3 金，依此递增。</p>'+
-  '<p>购买的标签可在「打标签」页使用。每枚棋子只能贴一枚标签，贴新的会覆盖原标签。位置标签在付费摇盘时生效。</p>'+
+  '<p>点击标签架上的标签，再选棋子贴上。每枚棋子只能贴一枚标签，贴新的会覆盖原标签。位置标签在付费摇盘时生效。</p>'+
   '<p>进店与招募后，轮盘实时显示队伍。摇盘从队伍和未用法术中随机抽取并触发联动。横、竖、斜角均算相邻。'+
   '摇盘中获得的强化永久保留。召唤的单位立即寻找随机空格入盘，受变化影响的棋子会继续结算。</p>'+
   '<p>开战时全队参加随机抽取，最多 '+FIELD_LIMIT+' 名首发，其余候补。每有两名已部署的招募单位最终阵亡，补一名候补。'+
@@ -249,7 +249,7 @@ function mountBattle(){
 function render(){
   if(run.phase==='shop'){
     if(tagsOpen)renderTags(app,run,tagSelection);
-    else renderShop(app,run,shopPane);
+    else renderShop(app,run);
   }else if(run.phase==='battle'){
     mountBattle();
   }else renderResult(app,run);
@@ -269,11 +269,6 @@ app.addEventListener('click',event=>{
   const action=button.dataset.act;
   if(spinController){
     if(action==='skip-spin')spinController.abort();
-    return;
-  }
-  if(button.dataset.shopPane){
-    shopPane=button.dataset.shopPane as ShopPane;
-    changeShopPane(app,shopPane);
     return;
   }
   if(button.dataset.kind){
@@ -338,14 +333,27 @@ app.addEventListener('click',event=>{
         if(keepFocus)app.querySelector<HTMLElement>('[data-act="refresh"]:enabled,.offer-art')?.focus({preventScroll:true});
       }
       break;
-    case 'manage-tags':
-      tagsOpen=true;render();
-      app.querySelector<HTMLElement>('[data-act="back-shop"]')?.focus();
+    case 'manage-tags':{
+      const tag=button.dataset.heldTag as TagId|undefined;
+      if(!tag||!tagCount(run.tagInventory,tag))break;
+      tagSelection={tag,notice:''};
+      tagsOpen=true;
+      render();
+      window.scrollTo(0,0);
+      app.querySelector<HTMLElement>('.tag-choice[aria-pressed="true"]')?.scrollIntoView({block:'nearest',inline:'nearest'});
+      app.querySelector<HTMLElement>('[data-act="back-shop"]')?.focus({preventScroll:true});
       break;
-    case 'back-shop':
-      tagsOpen=false;tagSelection={notice:''};render();
-      app.querySelector<HTMLElement>('[data-act="manage-tags"]')?.focus();
+    }
+    case 'back-shop':{
+      const tag=tagSelection.tag;
+      tagsOpen=false;
+      tagSelection={notice:''};
+      render();
+      window.scrollTo(0,0);
+      const entry=tag?app.querySelector<HTMLElement>('[data-held-tag="'+tag+'"]'):null;
+      (entry??app.querySelector<HTMLElement>('.held-tag')??app.querySelector<HTMLElement>('.offer-art'))?.focus({preventScroll:true});
       break;
+    }
     case 'apply-tag':{
       const {tag,unitId}=tagSelection;
       const selected=run.roster.find(unit=>unit.id===unitId);
@@ -375,8 +383,8 @@ app.addEventListener('click',event=>{
     case 'step':paused=true;stopTimer();tick();break;
     case 'speed':stopTimer();speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
     case 'skip':fastFinish();break;
-    case 'advance':advance(run);shopPane='wheel';save();render();break;
-    case 'reset':run=newRun(getSeed());shopPane='wheel';save();render();break;
+    case 'advance':advance(run);save();render();break;
+    case 'reset':run=newRun(getSeed());save();render();break;
     case 'log':{
       const current=pending&&replayIndex===undefined?
         pending.events.slice(0,currentFrame()?.until??0).filter(entry=>entry.phase!=='移动').map(entry=>

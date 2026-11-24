@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {encounters,spellOffer,unitEffectText,unitOffer,units} from '../src/data.ts';
+import {encounters,hasRace,spellOffer,unitEffectText,unitOffer,units} from '../src/data.ts';
 import {advance,canStartBattle,newRun,startBattle} from '../src/engine.ts';
 import {addTag,tagCount} from '../src/magic-tags.ts';
 import {unitStats} from '../src/shop/model.ts';
@@ -204,12 +204,13 @@ test('wheel buffs add permanently across rolls and battles, while a single roll 
   assert.equal(run.battle.units.find(unit=>unit.id===guard.id).shield,3);
 });
 
-test('a skeleton destroyed in the shop grants two gold without replacing its instance',()=>{
+test('the necromancer gains two gold for a sacrifice and the skeleton has no death effect',()=>{
   const {run,roster,roll}=sampleSpin(['king','page'],[],(near,[king,page])=>near(king,page));
   const [king,page]=roster;
   assert.equal(run.gold,21);
   assert.deepEqual(run.roster,[king]);
   assert.deepEqual([king.gainedAttack,king.gainedHealth],[3,3]);
+  assert.equal(unitEffectText('page'),'');
   assert.ok(roll.drawn.some(slot=>slot?.id===page.id));
   assert.ok(roll.settled.every(slot=>slot?.id!==page.id));
 });
@@ -266,7 +267,7 @@ test('a priest and the removal marker cannot create a greatsword skeleton copy',
   assert.deepEqual(run.roster,[priest]);
 });
 
-test('a priest triggers adjacent templar death effects without killing it, and a skeleton pays only on actual destruction',()=>{
+test('a priest triggers adjacent templar death effects without killing it',()=>{
   const {run,roster,roll}=sampleSpin(['medic','templar','page','guard'],[],(near,[priest,templar,page])=>
     near(priest,templar)&&near(priest,page));
   const [priest,templar,page,guard]=roster;
@@ -304,7 +305,7 @@ test('armored skeleton destruction fills randomized empty slots and can chain mu
   const chomped=positions.filter(index=>neighborSlots(roll.drawn.findIndex(slot=>slot?.id===king.id)).includes(index)).length;
   assert.deepEqual(roll.settledStats[king.id],{attack:6+3*chomped,health:15+3*chomped});
   assert.equal(run.roster.filter(unit=>unit.kind==='page').length,3-chomped);
-  assert.equal(run.gold,19+2*chomped);
+  assert.equal(run.gold,21+2*chomped);
 });
 
 test('death recruits that cannot fit stay in the roster without displacing an existing tile',()=>{
@@ -330,12 +331,44 @@ test('a space opened by a later unit rechecks vulnerable earlier slots',()=>{
   assert.deepEqual(roll.events[1].after.stats[lancer.id],{attack:4,health:7});
 });
 
-test('a surviving archer buffs all undead once per shop destruction',()=>{
+test('a surviving skeleton archer buffs itself once per allied undead destruction',()=>{
   const {run,roster}=sampleSpin(['king','page','page','bone','greatswordSkeleton','guard'],[],
     (near,[king,first,second,observer,ally])=>near(king,first)&&near(king,second)&&!near(king,observer)&&!near(king,ally));
   const [king,,,observer,ally,human]=roster;
   assert.deepEqual(run.roster,[king,observer,ally,human]);
-  assert.deepEqual([king.gainedAttack,observer.gainedAttack,ally.gainedAttack,human.gainedAttack],[12,6,6,0]);
+  assert.deepEqual([king.gainedAttack,observer.gainedAttack,ally.gainedAttack,human.gainedAttack],[6,8,0,0]);
+});
+
+test('warlock evolves both adjacent orc tiers, preserving tags and triggering elite growth',()=>{
+  const {run,roster:[warlock,orc,armor,elite],roll}=sampleSpin(
+    ['warlock','orc','armoredOrc','eliteOrc'],[],(near,[source,light,heavy])=>near(source,light)&&near(source,heavy),
+    ([,light])=>Object.assign(light,{gainedAttack:1,gainedHealth:4,startingArmor:2,tag:'shield'}),
+  );
+  assert.deepEqual(run.roster.map(unit=>unit.kind),['warlock','felSquire','felGuard','eliteOrc']);
+  for(const unit of [orc,armor])assert.ok(hasRace(unit.kind,'orc')&&hasRace(unit.kind,'undead'));
+  assert.deepEqual([orc.gainedAttack,orc.gainedHealth,orc.startingArmor,orc.tag],[4,7,2,'shield']);
+  assert.equal(elite.evolutionTriggers,2);
+  assert.deepEqual([warlock.gainedAttack,armor.gainedAttack,elite.gainedAttack],[3,3,3]);
+  assert.equal(roll.events.length,1);
+  assert.ok(roll.events[0].focus.includes(warlock.id));
+  assert.equal(roll.settled.find(slot=>slot?.id===orc.id).kind,'felSquire');
+  assert.equal(roll.settled.find(slot=>slot?.id===armor.id).kind,'felGuard');
+});
+
+test('the necromancer can chain into transformed fel undead, gets two gold for each, and spares other necromancers',()=>{
+  const {run,roster:[warlock,orc,armor,king,other,human],roll}=sampleSpin(
+    ['warlock','orc','armoredOrc','king','king','soldier'],[],(near,[source,light,heavy,necromancer,second])=>
+      near(source,light)&&near(source,heavy)&&near(necromancer,light)&&near(necromancer,heavy)&&
+      near(necromancer,second)&&!near(second,light)&&!near(second,heavy),
+  );
+  assert.equal(orc.kind,'felSquire');
+  assert.equal(armor.kind,'felGuard');
+  assert.deepEqual(run.roster,[warlock,king,other,human]);
+  assert.equal(run.gold,23);
+  assert.equal(tagCount(run.tagInventory),1);
+  assert.deepEqual([king.gainedAttack,king.gainedHealth],[9,9]);
+  assert.deepEqual([other.gainedAttack,human.gainedAttack],[3,3]);
+  assert.match(roll.events.map(event=>event.text).join('\n'),/消灭邪能.*金币 \+4/);
 });
 
 test('a shared target is destroyed by the first necromancer in display order exactly once',()=>{
