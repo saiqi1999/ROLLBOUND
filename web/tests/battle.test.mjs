@@ -457,8 +457,8 @@ test('an elite orc strengthens the whole faction after each evolution',()=>{
   assert.ok(roll.events.every(event=>event.focus.includes(elite.id)));
   run.phase='result';
   advance(run);
-  assert.match(unitEffectText('eliteOrc',elite),/永久获得\+3\/\+3，并强化此效果/);
-  assert.match(unitEffectText('eliteOrc'),/永久获得\+1\/\+1/);
+  assert.match(unitEffectText('eliteOrc',elite),/^【激活·友方兽人进化时】.*永久获得 \+3\/\+3，并强化此效果/);
+  assert.match(unitEffectText('eliteOrc'),/永久获得 \+1\/\+1/);
 });
 
 test('elite evolution also reaches earlier Orcs off the wheel at departure',()=>{
@@ -474,9 +474,9 @@ test('elite evolution also reaches earlier Orcs off the wheel at departure',()=>
 });
 
 test('the wizard description shows the full spell-scaled bonus',()=>{
-  assert.match(unitEffectText('wizard'),/获得\+1\/\+1/);
-  assert.match(unitEffectText('wizard',{spellCasts:2}),/获得\+3\/\+3。每施放一个法术，强化此效果/);
-  assert.match(unitEffectText('wizard',{spellCasts:9}),/获得\+10\/\+10/);
+  assert.match(unitEffectText('wizard'),/^【激活】.*获得 \+1\/\+1/);
+  assert.match(unitEffectText('wizard',{spellCasts:2}),/获得 \+3\/\+3。每施放 1 个法术，强化此效果/);
+  assert.match(unitEffectText('wizard',{spellCasts:9}),/获得 \+10\/\+10/);
 });
 
 test('summoning circle places a boosted human who can trigger links in the same roll',()=>{

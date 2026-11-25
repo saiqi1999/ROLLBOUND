@@ -53,6 +53,7 @@ dialog.addEventListener('close',()=>{
 const ruleText='<p>七店七战，落败或平局结束远征。每间商店发放金币，余额结转。第 2、4、6 战获胜各得 1 枚移除标签。</p>'+
   '<p>货架每次提供三名单位，第四格各有一半概率出法术或魔法标签。刷新花费 1 金。每店摇盘依次花费 1、1、2、2、3、3 金，依此递增。</p>'+
   '<p>点击标签架上的标签，再选棋子贴上。每枚棋子只能贴一枚标签，贴新的会覆盖原标签。位置标签在付费摇盘时生效。</p>'+
+  '<p>【激活】表示商店效果，默认在付费摇盘时结算。标有具体时机的效果按对应事件结算。【激活·死亡效果】在棋子被消灭或由牧师触发时结算。</p>'+
   '<p>进店与招募后，轮盘实时显示队伍。摇盘从队伍和未用法术中随机抽取并触发联动。横、竖、斜角均算相邻。'+
   '摇盘中获得的强化永久保留。召唤的单位立即寻找随机空格入盘，受变化影响的棋子会继续结算。</p>'+
   '<p>开战时全队参加随机抽取，最多 '+FIELD_LIMIT+' 名首发，其余候补。每有两名已部署的招募单位最终阵亡，补一名候补。'+
@@ -64,7 +65,7 @@ function showUnit(button:HTMLButtonElement,kind:Kind){
     health:Number(button.dataset.health)||units[kind].hp};
   const text=unitEffectText(kind,{spellCasts:run.spellCasts,evolutionTriggers:unit?.evolutionTriggers});
   modal(units[kind].name,art(kind)+unitTags(kind)+'<p>攻击 '+stats.attack+'　生命 '+stats.health+'</p>'+
-    '<p>'+text+'</p>'+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':'')+
+    (text?'<p>'+text+'</p>':'')+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':'')+
     (unit?.tag?'<h3>'+magicTags[unit.tag].name+'标签</h3>'+tagDetails(unit.tag):''));
 }
 
@@ -72,9 +73,10 @@ document.addEventListener('unit-info',((event:CustomEvent)=>{
   const unit=event.detail as {
     kind:Kind;hp:number;maxHp:number;atk:number;shield:number;temporary?:true;tag?:AppliedTag;cloneOf?:string;
   };
+  const text=unitEffectText(unit.kind);
   modal(units[unit.kind].name+(unit.cloneOf?'（分身）':''),art(unit.kind)+unitTags(unit.kind,unit.temporary)+
     '<p>攻击 '+unit.atk+'　生命 '+unit.hp+'/'+unit.maxHp+'　护甲 '+unit.shield+'</p>'+
-    '<p>'+unitEffectText(unit.kind)+'</p>'+(unit.tag?'<h3>'+magicTags[unit.tag].name+'标签</h3>'+tagDetails(unit.tag):''));
+    (text?'<p>'+text+'</p>':'')+(unit.tag?'<h3>'+magicTags[unit.tag].name+'标签</h3>'+tagDetails(unit.tag):''));
 }) as EventListener);
 
 async function spinShop(){

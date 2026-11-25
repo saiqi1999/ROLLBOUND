@@ -24,40 +24,60 @@ export const WEREWOLF_RECRUIT_GAIN=1;
 export const DEMON_STAT_PERCENT=50;
 export const wizardEntryGain=(spellCasts=0)=>1+spellCasts;
 export const eliteOrcEvolutionGain=(evolutionTriggers=0)=>1+evolutionTriggers;
+const activation=(effect:string,trigger?:string)=>'【激活'+(trigger?'·'+trigger:'')+'】'+effect;
 
 export const units = {
-  guard: { name:'木盾卫士', race:'human', hp:12, atk:2, text:'攻击时，获得'+GUARD_SHIELD+'护盾。' },
-  archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:'与守护单位相邻时，永久获得+1攻击。' },
-  medic: { name:'牧师', race:'human', hp:8, atk:1, text:'触发相邻友方单位的死亡时效果。' },
-  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:'招募时，额外获得2名骷髅兵。消灭相邻的友方亡灵（亡灵法师除外）。每消灭一名，永久获得+'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'和'+NECROMANCER_GOLD+'金币。' },
+  guard: { name:'木盾卫士', race:'human', hp:12, atk:2, text:'【攻击时】获得 '+GUARD_SHIELD+' 点护甲。' },
+  archer: { name:'见习弓手', race:'human', hp:7, atk:3, text:activation('与守护棋子相邻时，自身永久获得 +1 攻击。') },
+  medic: { name:'牧师', race:'human', hp:8, atk:1, text:activation('触发相邻友方棋子的商店死亡效果。') },
+  king: { name:'亡灵法师', race:'undead', hp:12, atk:3, text:activation('额外招募 2 名骷髅兵。','招募时')+' '+
+    activation('消灭相邻友方亡灵（亡灵法师除外）。每消灭 1 名，自身永久获得 +'+NECROMANCER_GAIN+'/+'+NECROMANCER_GAIN+'，并获得 '+NECROMANCER_GOLD+' 金币。') },
   page: { name:'骷髅兵', race:'undead', hp:3, atk:1, text:'' },
-  orc: { name:'兽人', race:'orc', hp:10, atk:3, text:'攻击力达到'+ORC_ARMOR_THRESHOLD+'时，永久进化为重甲兽人。' },
-  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:'友方亡灵死亡时，本单位获得+'+BONE_ATTACK_GAIN+'攻击力。' },
-  soldier: { name:'士兵', race:'human', hp:6, atk:2, text:'使同盘其他友方人类永久+1生命。' },
-  swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:'使相邻友方人类永久+'+SWORDSMAN_GAIN+'/+'+SWORDSMAN_GAIN+'。' },
-  axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:'使相邻友方人类永久获得'+HUMAN_ARMOR+'初始护甲。死亡时，使其他友方人类获得'+HUMAN_ARMOR+'护甲。' },
-  lancer: { name:'长枪兵', race:'human', hp:6, atk:2, text:'有相邻空格时，永久+2/+1。' },
-  templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:'死亡时，使其他友方人类获得+'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN+'。' },
+  orc: { name:'兽人', race:'orc', hp:10, atk:3, text:activation('永久进化为重甲兽人。','攻击达到 '+ORC_ARMOR_THRESHOLD+' 时') },
+  bone: { name:'骷髅弓箭手', race:'undead', hp:7, atk:2, text:
+    activation('若自身在盘上，永久获得 +'+BONE_ATTACK_GAIN+' 攻击。','友方亡灵被消灭时')+
+    ' 【友方亡灵阵亡时】若自身在场，本场获得 +'+BONE_ATTACK_GAIN+' 攻击。' },
+  soldier: { name:'士兵', race:'human', hp:6, atk:2, text:activation('使同盘其他友方人类永久获得 +1 生命。') },
+  swordsman: { name:'剑士', race:'human', hp:6, atk:2, text:activation('使相邻友方人类永久获得 +'+SWORDSMAN_GAIN+'/+'+SWORDSMAN_GAIN+'。') },
+  axeman: { name:'重甲斧', race:'human', hp:10, atk:2, guardian:true, text:
+    activation('使相邻友方人类永久获得 '+HUMAN_ARMOR+' 点初始护甲。')+' '+
+    activation('使同盘其他友方人类永久获得 '+HUMAN_ARMOR+' 点初始护甲。','死亡效果')+
+    ' 【阵亡时】使其他在场友方人类获得 '+HUMAN_ARMOR+' 点护甲。' },
+  lancer: { name:'长枪兵', race:'human', hp:6, atk:2, text:activation('与空格相邻时，自身永久获得 +2/+1。') },
+  templar: { name:'圣殿骑士', race:'human', hp:9, atk:2, guardian:true, text:
+    activation('使同盘其他友方人类永久获得 +'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN+'。','死亡效果')+
+    ' 【阵亡时】使其他在场友方人类本场获得 +'+TEMPLAR_DEATH_GAIN+'/+'+TEMPLAR_DEATH_GAIN+'。' },
   wizard: { name:'法师', race:'human', hp:7, atk:2, text:({spellCasts})=>{
     const gain=wizardEntryGain(spellCasts);
-    return '使相邻友方永久获得+'+gain+'/+'+gain+'。每施放一个法术，强化此效果。每次摇盘可连锁触发。';
+    return activation('使相邻友方棋子永久获得 +'+gain+'/+'+gain+'。每施放 1 个法术，强化此效果。同一摇盘可连锁激活多次。');
   } },
-  armoredOrc: { name:'重甲兽人', race:'orc', hp:24, atk:6, guardian:true, text:'与至少'+ORC_RIDER_NEIGHBORS+'名其他友方兽人相邻时，永久进化为兽人骑兵。' },
-  slime: { name:'史莱姆', race:'monster', hp:6, atk:1, text:'在商店被移除时，使队伍中其余所有单位永久获得+'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。' },
-  orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:9, text:'攻击时额外连击一次。每击杀一个敌人，永久获得+1/+1。' },
-  armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:'死亡时，招来'+ARMORED_SKELETON_SPAWNS+'名骷髅兵。商店中永久入队并寻找空格上盘，战斗中立即召唤临时单位。' },
-  bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:'招募时，随机获得1个法术。' },
-  greatswordSkeleton: { name:'大剑骷髅', race:'undead', hp:8, atk:3, text:'在商店被消灭时，复制自身并使复制永久获得+'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'。下次摇盘或开战前入队。' },
+  armoredOrc: { name:'重甲兽人', race:'orc', hp:24, atk:6, guardian:true,
+    text:activation('与至少 '+ORC_RIDER_NEIGHBORS+' 名其他友方兽人相邻时，永久进化为兽人骑兵。') },
+  slime: { name:'史莱姆', race:'monster', hp:6, atk:1, text:
+    activation('使队伍中其他友方棋子永久获得 +'+SLIME_REMOVAL_GAIN+'/+'+SLIME_REMOVAL_GAIN+'。','被移除时') },
+  orcRider: { name:'兽人骑兵', race:'orc', hp:24, atk:9, text:'【攻击时】额外攻击 1 次。 【击杀时】永久获得 +1/+1（临时棋子仅本场）。' },
+  armoredSkeleton: { name:'重甲骷髅', race:'undead', hp:12, atk:2, guardian:true, text:
+    activation('招募 '+ARMORED_SKELETON_SPAWNS+' 名骷髅兵，有空格时上盘。','死亡效果')+
+    ' 【阵亡时】召唤 '+ARMORED_SKELETON_SPAWNS+' 名临时骷髅兵。' },
+  bat: { name:'蝙蝠', race:'monster', hp:5, atk:2, text:activation('随机获得 1 个法术。','招募时') },
+  greatswordSkeleton: { name:'大剑骷髅', race:'undead', hp:8, atk:3, text:
+    activation('复制自身。复制体永久获得 +'+GREATSWORD_COPY_GAIN+'/+'+GREATSWORD_COPY_GAIN+'，在下次摇盘或开战前入队。','被消灭时') },
   eliteOrc: { name:'精英兽人', race:'orc', hp:16, atk:4, text:({evolutionTriggers})=>{
     const gain=eliteOrcEvolutionGain(evolutionTriggers);
-    return '友方兽人进化时，使所有友方兽人永久获得+'+gain+'/+'+gain+'，并强化此效果。';
+    return activation('使所有友方兽人永久获得 +'+gain+'/+'+gain+'，并强化此效果。','友方兽人进化时');
   } },
-  werebear: { name:'熊人', race:'monster', hp:18, atk:3, text:'攻击时，获得等同于自身攻击力的护甲。' },
-  werewolf: { name:'狼人', race:'monster', hp:8, atk:3, text:'你购买其他单位时，永久获得+'+WEREWOLF_RECRUIT_GAIN+'/+'+WEREWOLF_RECRUIT_GAIN+'。' },
-  warlock: { name:'术士', race:'orc', hp:10, atk:3, text:'使相邻的兽人进化为邪能侍从，重甲兽人进化为邪能守卫。' },
-  felSquire: { name:'邪能侍从', race:['orc','undead'], hp:10, atk:3, text:'死亡时，使所有友方单位获得+'+FEL_SQUIRE_GAIN+'/+'+FEL_SQUIRE_GAIN+'。' },
-  felGuard: { name:'邪能守卫', race:['orc','undead'], hp:24, atk:6, text:'死亡时，随机获得1枚标签。' },
-  demon: { name:'小恶魔', race:'demon', hp:7, atk:3, text:'每次摇盘，永久获得身材最大的相邻友方单位'+DEMON_STAT_PERCENT+'%的攻击和生命（身材为攻击与生命之和，分别向上取整）。' },
+  werebear: { name:'熊人', race:'monster', hp:18, atk:3, text:'【攻击时】获得等同于自身当前攻击的护甲。' },
+  werewolf: { name:'狼人', race:'monster', hp:8, atk:3, text:
+    activation('自身永久获得 +'+WEREWOLF_RECRUIT_GAIN+'/+'+WEREWOLF_RECRUIT_GAIN+'。','购买其他棋子时') },
+  warlock: { name:'术士', race:'orc', hp:10, atk:3, text:
+    activation('使相邻的「兽人」永久进化为邪能侍从，使相邻的「重甲兽人」永久进化为邪能守卫。') },
+  felSquire: { name:'邪能侍从', race:['orc','undead'], hp:10, atk:3, text:
+    activation('使队伍中其他友方棋子永久获得 +'+FEL_SQUIRE_GAIN+'/+'+FEL_SQUIRE_GAIN+'。','死亡效果')+
+    ' 【阵亡时】使所有存活友方棋子（含候补）本场获得 +'+FEL_SQUIRE_GAIN+'/+'+FEL_SQUIRE_GAIN+'。' },
+  felGuard: { name:'邪能守卫', race:['orc','undead'], hp:24, atk:6, text:activation('随机获得 1 枚标签。','死亡效果')+
+    ' 【阵亡时】随机获得 1 枚标签，战后入库。' },
+  demon: { name:'小恶魔', race:'demon', hp:7, atk:3, text:
+    activation('选出攻击与生命之和最高的相邻友方棋子。自身永久获得其 '+DEMON_STAT_PERCENT+'% 的攻击和生命，分别向上取整。每摇最多一次。') },
 } as const satisfies Record<string,UnitDefinition>;
 export type Kind = keyof typeof units;
 export const unitKinds=Object.keys(units) as Kind[];
