@@ -1,4 +1,4 @@
-import {hasGuardian,spells,units,type Kind} from '../data.ts';
+import {spells,units,type Kind} from '../data.ts';
 import {magicTags} from '../magic-tags.ts';
 import type {ShopEvent,ShopFrame,ShopSlot,ShopSpinResult,WheelStats} from '../shop/model.ts';
 import {WHEEL_WIDTH} from '../shop/wheel.ts';
@@ -11,7 +11,7 @@ const empowerSheet=new Image();
 empowerSheet.src=import.meta.env.BASE_URL+'art/fx-empower.png';
 
 const unitLabel=(kind:Kind,stats:WheelStats)=>units[kind].name+'，攻击 '+stats.attack+'，生命 '+stats.health+
-  (hasGuardian(kind)?'，守护':'')+(stats.tag?'，'+magicTags[stats.tag].name+'标签':'');
+  (stats.tag?'，'+magicTags[stats.tag].name+'标签':'');
 
 function statNumbers(kind:Kind,stats:WheelStats){
   const unit=units[kind];

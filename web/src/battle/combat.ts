@@ -1,8 +1,10 @@
-import {hasGuardian} from '../data.ts';
 import {COMBAT,profile,type Battle,type Point,type Unit} from './model.ts';
 import {distance,resolveMovement} from './movement.ts';
 import {shuffle} from './random.ts';
-import {canAct,chooseTarget,deployed,planMotion,recover,turnTowards,withinRange,type Fighter} from './unit-state.ts';
+import {
+  canAct,chooseLegacyTarget,chooseTarget,closestEnemy,deployed,legacyGuardKinds,
+  planMotion,recover,turnTowards,withinRange,type Fighter,
+} from './unit-state.ts';
 
 const MOTION_EPSILON=1e-6;
 const homeSlots:Point[]=[
@@ -46,17 +48,21 @@ export function deployUnit(battle:Battle,unit:Unit){
   spawnActor(battle,unit);
 }
 
-function planAttackTargets(battle:Battle,fighter:Fighter,primary:Unit):Unit[]{
+function planAttackTargets(battle:Battle,fighter:Fighter,primary:Unit,legacyTargeting:boolean):Unit[]{
   const {unit,actor}=fighter;
   const extra=unit.tag==='triple'?2:unit.tag==='double'?1:0;
   if(!extra)return [primary];
   const range=profile(unit.kind).range;
-  const reachable=battle.units.filter(enemy=>enemy.side!==unit.side&&enemy!==primary&&deployed(enemy)&&
-    distance(actor.position,battle.runtime.actors[enemy.id].position)<=range);
-  const random=battle.runtime.effectRandom;
-  const guards=shuffle(reachable.filter(enemy=>hasGuardian(enemy.kind)),random);
-  const others=shuffle(reachable.filter(enemy=>!hasGuardian(enemy.kind)),random);
-  return [primary,...[...guards,...others].slice(0,extra)];
+  const gap=(enemy:Unit)=>distance(actor.position,battle.runtime.actors[enemy.id].position);
+  const reachable=battle.units.filter(enemy=>enemy.side!==unit.side&&enemy!==primary&&deployed(enemy)&&gap(enemy)<=range);
+  if(legacyTargeting){
+    const random=battle.runtime.effectRandom;
+    const guards=shuffle(reachable.filter(enemy=>legacyGuardKinds.has(enemy.kind)),random);
+    const others=shuffle(reachable.filter(enemy=>!legacyGuardKinds.has(enemy.kind)),random);
+    return [primary,...[...guards,...others].slice(0,extra)];
+  }
+  reachable.sort((left,right)=>gap(left)-gap(right));
+  return [primary,...reachable.slice(0,extra)];
 }
 
 type CombatEffects = {
@@ -65,13 +71,19 @@ type CombatEffects = {
 };
 
 export function advanceCombatTick(battle:Battle,effects:CombatEffects){
+  // Saved fights that predate ruleset 4 keep their targeting for deterministic replay.
+  const legacyTargeting=(battle.ruleset??3)<4;
   const clock=battle.runtime;
   const tick=++clock.tick;
   const fighters=battle.units.filter(deployed).map(unit=>({unit,actor:clock.actors[unit.id]}));
   const byId=new Map(fighters.map(fighter=>[fighter.unit.id,fighter]));
-  for(const {actor} of fighters){
+  for(const fighter of fighters){
+    const {actor}=fighter;
     if(actor.phase==='recover'&&actor.readyAt<=tick)actor.phase='ready';
-    if(actor.phase==='windup'&&(!actor.targetId||!byId.has(actor.targetId)))actor.phase='ready';
+    if(actor.phase==='windup'){
+      const target=actor.targetId&&byId.get(actor.targetId);
+      if(!target||(!legacyTargeting&&!withinRange(fighter,target)))actor.phase='ready';
+    }
   }
 
   const snapshot=fighters.map(({actor})=>actor.position);
@@ -79,14 +91,14 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
   const intents=fighters.map(fighter=>{
     const {actor}=fighter;
     if(!canAct(actor))return {x:0,y:0};
-    const target=chooseTarget(fighter,fighters,clock);
+    const target=legacyTargeting?chooseLegacyTarget(fighter,fighters,clock):chooseTarget(fighter,fighters);
     if(actor.targetId!==target?.unit.id){
       actor.detour=undefined;
       actor.blockedTicks=0;
     }
     actor.targetId=target?.unit.id;
     if(!target){actor.phase='ready';return {x:0,y:0};}
-    aim.set(fighter,target);
+    if(legacyTargeting||withinRange(fighter,target))aim.set(fighter,target);
     turnTowards(actor,target.actor);
     actor.phase='approach';
     return planMotion(fighter,target,fighters,tick);
@@ -102,13 +114,20 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
   });
   if(moved.some((point,i)=>distance(point,snapshot[i])>MOTION_EPSILON))effects.motion();
 
-  for(const [fighter,target] of aim){
-    if(!withinRange(fighter,target))continue;
-    turnTowards(fighter.actor,target.actor);
-    fighter.actor.phase='windup';
-    fighter.actor.readyAt=tick+profile(fighter.unit.kind).windup;
-    fighter.actor.detour=undefined;
-    fighter.actor.blockedTicks=0;
+  for(const fighter of fighters){
+    const {unit,actor}=fighter;
+    if(actor.phase!=='approach')continue;
+    const {range,windup}=profile(unit.kind);
+    let target=aim.get(fighter);
+    if(target&&!withinRange(fighter,target))target=undefined;
+    if(!target&&!legacyTargeting)target=closestEnemy(fighter,fighters,range);
+    if(!target)continue;
+    actor.targetId=target.unit.id;
+    turnTowards(actor,target.actor);
+    actor.phase='windup';
+    actor.readyAt=tick+windup;
+    actor.detour=undefined;
+    actor.blockedTicks=0;
   }
 
   const firstSide=tick%2;
@@ -125,10 +144,11 @@ export function advanceCombatTick(battle:Battle,effects:CombatEffects){
     }
     turnTowards(actor,target.actor);
     recover(actor,tick+profile(unit.kind).recover);
-    effects.attack(unit,planAttackTargets(battle,fighter,target.unit));
+    effects.attack(unit,planAttackTargets(battle,fighter,target.unit,legacyTargeting));
     if(unit.kind==='orcRider'){
       const live=battle.units.filter(deployed).map(unit=>({unit,actor:clock.actors[unit.id]}));
-      const followUp=chooseTarget(fighter,live,clock,enemy=>withinRange(fighter,enemy));
+      const followUp=legacyTargeting?chooseLegacyTarget(fighter,live,clock,true):
+        chooseTarget(fighter,live,profile(unit.kind).range);
       if(followUp){
         actor.targetId=followUp.unit.id;
         turnTowards(actor,followUp.actor);

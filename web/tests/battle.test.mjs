@@ -210,7 +210,7 @@ test('a shop save restores the current preview and the prior stop without rollin
   assert.deepEqual(saved.shop.board,run.shop.board);
 });
 
-test('archer grows once per roll beside any guardian, with no additional growth for multiple guardians',()=>{
+test('archer grows once per roll beside its named partners, even when several are adjacent',()=>{
   const {run,roster,roll}=sampleSpin(['archer','templar','armoredSkeleton'],[],(near,[archer,left,right])=>
     near(archer,left)&&near(archer,right));
   const [archer,left,right]=roster;
@@ -219,8 +219,8 @@ test('archer grows once per roll beside any guardian, with no additional growth 
   run.gold=100;
   for(let turn=0;turn<10;turn++)resolveSpin(run);
   assert.ok(archer.gainedAttack>1);
-  const withoutGuardian=sampleSpin(['archer','guard'],[],(near,[bow,guard])=>near(bow,guard));
-  assert.equal(withoutGuardian.roster[0].gainedAttack,0);
+  const withoutPartner=sampleSpin(['archer','guard'],[],(near,[bow,guard])=>near(bow,guard));
+  assert.equal(withoutPartner.roster[0].gainedAttack,0);
 });
 
 test('wheel buffs add permanently across rolls and battles, while a single roll deduplicates the same adjacency ability',()=>{

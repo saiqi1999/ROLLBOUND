@@ -1,4 +1,4 @@
-import {hasGuardian,units,type Kind} from '../data.ts';
+import {units,type Kind} from '../data.ts';
 import type {Side,Unit} from './model.ts';
 import {type Actor,type CombatRuntime,profile} from './model.ts';
 import {approachMotion,distance,findDetour,followDetour} from './movement.ts';
@@ -12,11 +12,32 @@ export function deployed(unit:Unit){
   return unit.field&&unit.hp>0;
 }
 
-export function chooseTarget(fighter:Fighter,live:Fighter[],clock:CombatRuntime,reachable?:(target:Fighter)=>boolean){
+export function closestEnemy(fighter:Fighter,live:Fighter[],range=Infinity){
+  let closest:Fighter|undefined;
+  let closestDistance=Infinity;
+  for(const other of live){
+    if(other.unit.side===fighter.unit.side)continue;
+    const gap=distance(fighter.actor.position,other.actor.position);
+    if(gap>range||gap>=closestDistance)continue;
+    closest=other;
+    closestDistance=gap;
+  }
+  return closest;
+}
+
+export function chooseTarget(fighter:Fighter,live:Fighter[],range=Infinity){
+  const target=live.find(other=>other.unit.id===fighter.actor.targetId&&other.unit.side!==fighter.unit.side);
+  if(target&&withinRange(fighter,target))return target;
+  return closestEnemy(fighter,live,range);
+}
+
+export const legacyGuardKinds:ReadonlySet<Kind>=new Set(['axeman','templar','armoredOrc','armoredSkeleton']);
+
+export function chooseLegacyTarget(fighter:Fighter,live:Fighter[],clock:CombatRuntime,inRangeOnly=false){
   const enemies=live.filter(other=>other.unit.side!==fighter.unit.side);
-  const guards=enemies.filter(other=>hasGuardian(other.unit.kind));
+  const guards=enemies.filter(other=>legacyGuardKinds.has(other.unit.kind));
   const preferred=guards.length?guards:enemies;
-  const eligible=reachable?preferred.filter(reachable):preferred;
+  const eligible=inRangeOnly?preferred.filter(other=>withinRange(fighter,other)):preferred;
   return eligible.find(other=>other.unit.id===fighter.actor.targetId)??
     (eligible.length?pick(eligible,clock):undefined);
 }

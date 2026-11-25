@@ -1,4 +1,4 @@
-import {encounters,hasGuardian,races,unitRaces,type Kind,type SpellKind} from '../data.ts';
+import {encounters,races,unitRaces,type Kind,type SpellKind} from '../data.ts';
 import type {Run} from '../engine.ts';
 import {magicTags,type TagId} from '../magic-tags.ts';
 import {lineupLogging} from '../lineup-client.ts';
@@ -16,7 +16,7 @@ export const lineupExport=lineupLogging?
   '<a class="lineup-export" href="./api/battle-lineups" download>导出阵容日志</a>':'';
 
 export function unitTags(kind:Kind,temporary=false){
-  return '<span class="unit-tags">'+unitRaces(kind).map(race=>races[race]).join(' + ')+(hasGuardian(kind)?' · 守护':'')+
+  return '<span class="unit-tags">'+unitRaces(kind).map(race=>races[race]).join(' + ')+
     (temporary?' · 临时':'')+'</span>';
 }
 

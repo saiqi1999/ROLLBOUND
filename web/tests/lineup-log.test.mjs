@@ -23,7 +23,8 @@ test('lineup snapshots preserve older opening attack values and label new combat
   recruit(run,'armoredOrc',4);
   startLoggedBattle(run);
   const current=captureLineup(run);
-  assert.equal(current.ruleset,3);
+  assert.equal(current.ruleset,4);
+  assert.equal(current.ruleset,run.battle.ruleset);
   assert.deepEqual(current.lineup.starters.map(unit=>unit.atk),[11,10]);
   delete run.battle.lineupLog.ruleset;
   const old=captureLineup(run);

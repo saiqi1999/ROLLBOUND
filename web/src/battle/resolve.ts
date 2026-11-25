@@ -2,7 +2,7 @@ import {units} from '../data.ts';
 import {advanceCombatTick,deployUnit} from './combat.ts';
 import {createEffects} from './effects.ts';
 import {
-  COMBAT,createCombat,DEATHS_PER_REINFORCEMENT,FIELD_LIMIT,
+  BATTLE_RULESET,COMBAT,createCombat,DEATHS_PER_REINFORCEMENT,FIELD_LIMIT,
   type Battle,type BattlePlan,type BattleWindow,type Outcome,type RecordMoment,type Unit,
 } from './model.ts';
 import {shuffle} from './random.ts';
@@ -39,7 +39,7 @@ export function createBattle(plan:BattlePlan):Battle{
   });
   const enemies=plan.enemies.map(({kind,attack,health},index)=>makeUnit('1-'+index,kind,1,attack,health));
   const battle:Battle={
-    id:plan.id,units:[...allies,...enemies],reserves:[[],[]],recruitedDeaths:[0,0],
+    id:plan.id,ruleset:BATTLE_RULESET,units:[...allies,...enemies],reserves:[[],[]],recruitedDeaths:[0,0],
     openingResolved:false,openingSpells:structuredClone(plan.openingSpells),runtime:createCombat(plan.seed),
   };
   const groups=[allies,enemies];

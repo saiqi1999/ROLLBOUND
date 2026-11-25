@@ -170,7 +170,7 @@ test('both sides move from the same snapshot without passing through each other'
   assert.deepEqual(p,[{x:300,y:300},{x:420,y:300}]);
 });
 
-test('a werewolf can get its first attack while pursuing an archer behind the frontline',()=>{
+test('a werewolf gets to attack against a full opposing team',()=>{
   const run=newRun(247);
   recruit(run,'armoredSkeleton');
   recruit(run,'greatswordSkeleton');
@@ -181,12 +181,11 @@ test('a werewolf can get its first attack while pursuing an archer behind the fr
   assert.ok(attacks.length);
 });
 
-test('a blocked wolf steps sideways around a unit and strikes its original target after reload',()=>{
-  const {battle}=scenario([['werewolf',200,300]],[['orc',262,300],['bone',460,300]]);
-  for(const unit of live(battle,1))Object.assign(battle.runtime.actors[unit.id],{phase:'recover',readyAt:30});
+test('a blocked wolf steps sideways around an ally and strikes the enemy after reload',()=>{
+  const {battle}=scenario([['werewolf',200,300],['orc',262,300]],[['bone',460,300]]);
+  for(const unit of battle.units.slice(1))Object.assign(battle.runtime.actors[unit.id],{phase:'recover',readyAt:30});
   const [wolf,blocker,archer]=battle.units.map(unit=>unit.id);
   const actors=battle.runtime.actors;
-  actors[wolf].targetId=archer;
   const first=simulateBattleWindow(battle,{tickLimit:1}).next;
   const position=first.runtime.actors[wolf].position;
   assert.ok(distance(position,actors[archer].position)>distance(actors[wolf].position,actors[archer].position));
@@ -199,6 +198,39 @@ test('a blocked wolf steps sideways around a unit and strikes its original targe
     assert.equal(actors[wolf].targetId,archer);
     assert.ok(distance(actors[wolf].position,actors[blocker].position)>=COMBAT.separation-1e-6);
   }
+});
+
+test('a fighter stops to engage the enemy that is closest after both sides move into range',()=>{
+  const {battle}=scenario([['werewolf',300,300]],[['armoredSkeleton',445,300],['orc',350,465]]);
+  const [wolf,skeleton,orc]=battle.units.map(unit=>unit.id);
+  Object.assign(battle.runtime.actors[skeleton],{phase:'recover',readyAt:30});
+  const first=simulateBattleWindow(battle,{tickLimit:1}).next;
+  const actors=first.runtime.actors;
+  assert.ok(actors[wolf].position.x>300);
+  assert.ok(distance(actors[wolf].position,actors[skeleton].position)<=profile('werewolf').range);
+  assert.equal(actors[wolf].targetId,orc);
+  assert.equal(actors[wolf].phase,'windup');
+});
+
+test('a ranged fighter keeps an in-range target and retargets when it leaves range',()=>{
+  const {battle}=scenario([['archer',200,310]],[['templar',525,310],['orc',390,310],['page',450,450]]);
+  const [archer,templar,orc,skeleton]=battle.units.map(unit=>unit.id);
+  for(const unit of live(battle,1))Object.assign(battle.runtime.actors[unit.id],{phase:'recover',readyAt:40});
+  const first=simulateBattleWindow(battle,{tickLimit:1}).next;
+  assert.equal(first.runtime.actors[archer].targetId,orc);
+  first.runtime.actors[skeleton].position={x:330,y:410};
+  const locked=simulateBattleWindow(first,{tickLimit:10});
+  assert.equal(locked.events.find(event=>event.source===archer)?.target,orc);
+  assert.equal(locked.next.runtime.actors[archer].targetId,orc);
+  assert.equal(locked.next.runtime.actors[archer].phase,'windup');
+  locked.next.runtime.actors[orc].position={x:640,y:310};
+  const retargeted=simulateBattleWindow(locked.next,{tickLimit:4});
+  assert.equal(retargeted.events.find(event=>event.source===archer)?.target,skeleton);
+
+  // Older saves must reproduce their original actions when a fight is replayed.
+  delete battle.ruleset;
+  const legacy=simulateBattleWindow(battle,{tickLimit:4});
+  assert.equal(legacy.events.find(event=>event.source===archer)?.target,templar);
 });
 
 test('a lethal hit interrupts a queued strike, and the dead fighter is ignored by later hits',()=>{
@@ -226,7 +258,7 @@ test('ranged fighters leave enough space for other fighters to pass',()=>{
 });
 
 test('rider extra attacks find a live enemy and use the earlier permanent kill growth',()=>{
-  const run=scenario([['orcRider',450,310]],[['page',550,310],['orc',468,410]]);
+  const run=scenario([['orcRider',450,310]],[['page',550,310],['orc',468,410],['armoredOrc',800,420]]);
   charge(run.battle,'0-0','1-0');
   const window=simulateBattleWindow(run.battle,{tickLimit:1});
   assert.deepEqual(window.events.filter(event=>event.action==='attack').map(event=>
@@ -239,9 +271,9 @@ test('rider extra attacks find a live enemy and use the earlier permanent kill g
   assert.equal(run.roster[0].gainedAttack,run.roster[0].gainedHealth);
 });
 
-test('one triple strike prioritizes reachable guardians and uses a shared damage snapshot before the rider follow-up',()=>{
+test('a triple strike hits the nearest additional enemies before the rider finds another target',()=>{
   const {battle}=scenario([['orcRider',450,310]],[
-    ['page',550,310],['templar',450,210],['guard',620,410],['page',355,310],['axeman',800,310],
+    ['page',550,310],['templar',450,200],['page',450,398],['page',355,310],['axeman',800,310],
   ]);
   const rider=battle.units[0];
   rider.tag='triple';
@@ -249,12 +281,13 @@ test('one triple strike prioritizes reachable guardians and uses a shared damage
   charge(battle,rider.id,'1-0');
   const window=simulateBattleWindow(battle,{tickLimit:1});
   const attacks=window.events.filter(event=>event.action==='attack');
-  const [primary,extra,...rest]=attacks;
-  assert.deepEqual([primary.target,extra.target,rest[0].target],['1-0','1-1','1-3']);
+  const [primary]=attacks;
+  assert.deepEqual(attacks.map(hit=>hit.target),['1-0','1-2','1-3','1-1']);
   assert.ok(attacks.slice(0,3).every(hit=>hit.attackId===primary.attackId&&hit.damage===9));
-  assert.equal(window.next.units[0].bonus,3);
+  assert.equal(window.next.units[0].bonus,4);
   assert.equal(actorFeedback(window.events).get(rider.id).attack,true);
-  assert.equal(attacks.filter(hit=>hit.followUp).length,0);
+  assert.equal(attacks.at(-1).followUp,true);
+  assert.equal(attacks.at(-1).damage,12);
 });
 
 test('triple rider hits use one snapshot, followed by an independent single strike with kill growth',()=>{

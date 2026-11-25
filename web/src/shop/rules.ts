@@ -1,7 +1,7 @@
 import {
   ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,DEMON_STAT_PERCENT,FEL_SQUIRE_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,NECROMANCER_GOLD,
   ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,WEREWOLF_RECRUIT_GAIN,
-  canEvolveOrc,eliteOrcEvolutionGain,hasGuardian,hasRace,humanKinds,
+  archerPartners,canEvolveOrc,eliteOrcEvolutionGain,hasRace,humanKinds,
   shopKinds,spellKinds,spellOffer,spells,tagOffer,unitOffer,units,wizardEntryGain,
   type Kind,type Offer,type SpellKind,
 } from '../data.ts';
@@ -343,9 +343,9 @@ function resolveLink(spin:Spin,source:UnitInstance,index:number,prefix:string){
       break;
     }
     case 'archer':{
-      const guards=neighbors.filter(unit=>hasGuardian(unit.kind));
-      if(!guards.length||!grantLinkGrowth(spin,source,'archer',{attack:1}))break;
-      announce('永久 +1 攻击。',guards,[source]);
+      const partners=neighbors.filter(unit=>archerPartners.includes(unit.kind));
+      if(!partners.length||!grantLinkGrowth(spin,source,'archer',{attack:1}))break;
+      announce('永久 +1 攻击。',partners,[source]);
       break;
     }
     case 'demon':{

@@ -35,6 +35,7 @@ export type BattlePlan = {
 };
 export type Battle = {
   id:string;
+  ruleset?:number;
   lineupLog?:{id:string;startedAt:number;ruleset?:number};
   units:Unit[];
   reserves:[string[],string[]];
@@ -61,6 +62,7 @@ export type BattleWindow = {
   startTick:number;startedAfterOpening:boolean;next:Battle;events:Moment[];ticks:CombatTick[];outcome?:Outcome;
 };
 
+export const BATTLE_RULESET=4;
 export const FIELD_LIMIT=16;
 export const DEATHS_PER_REINFORCEMENT=2;
 export const COMBAT = {
