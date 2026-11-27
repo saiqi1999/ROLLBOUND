@@ -1,11 +1,11 @@
 import {encounters,REFRESH_COST,spells,unitEffectText,units,type Kind} from '../data.ts';
 import {canStartBattle,type Run} from '../engine.ts';
 import {magicTags,tagCount,tagIds,type AppliedTag} from '../magic-tags.ts';
-import {scenery} from '../landscape.ts';
 import {unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
 import {canSpin,spinCost} from '../shop/rules.ts';
 import {art,coin,header,heart,lineupExport,spellArt,tagArt,tagBadge,unitTags} from './common.ts';
 import {renderReels} from './reels.ts';
+import './shop.css';
 
 function rosterButton(kind:Kind,attack:number,health:number,count:number,id?:string,armor=0,tag?:AppliedTag){
   return '<button class="roster-unit" data-kind="'+kind+'" data-attack="'+attack+'" data-health="'+health+
@@ -106,7 +106,7 @@ export function paintShopControls(root:HTMLElement,run:Run,spinning=false){
   const spin=root.querySelector<HTMLButtonElement>('[data-act="spin"]')!;
   spin.disabled=spinning||!canSpin(run);
   spin.hidden=spinning;
-  spin.innerHTML='<span class="spin-direction" aria-hidden="true">←</span><span>摇盘</span>'+
+  spin.innerHTML='<span>摇盘</span>'+
     '<span class="offer-cost">'+coin+cost+' 金</span>';
   root.querySelector<HTMLButtonElement>('[data-act="skip-spin"]')!.hidden=!spinning;
   root.querySelector('#wheel-status')!.textContent=symbols===0?'招募单位或购买法术后可摇盘。':
@@ -135,32 +135,34 @@ export function renderShop(root:HTMLElement,run:Run){
     const unit=offer.type==='unit'?offer.kinds[0]:undefined;
     const artButton=offer.type==='spell'?'data-spell="'+offer.spell+'"':
       offer.type==='tag'?'data-tag-info="'+offer.tag+'"':'data-kind="'+unit+'"';
-    const stats=unit?unitTags(unit)+
-      '<span class="offer-stats">⚔ '+units[unit].atk+' <span class="offer-health">'+heart+' '+units[unit].hp+'</span></span>':
+    const stats=unit?'<span class="offer-stats">⚔ '+units[unit].atk+
+      ' <span class="offer-health">'+heart+' '+units[unit].hp+'</span></span>':
       '<span class="offer-type">'+(offer.type==='tag'?'魔法标签':'法术')+'</span>';
     const portrait=offer.type==='unit'?art(offer.kinds[0],'lead'):
       offer.type==='spell'?spellArt(offer.spell,'lead'):tagArt(offer.tag,'shelf-tag');
-    return '<article class="offer" aria-labelledby="offer-title-'+index+'"><div class="offer-main"><button class="offer-art'+(unit?'':' spell-diorama')+
-      '" '+artButton+' aria-label="查看 '+offer.title+' 详情">'+(unit?'<canvas aria-hidden="true" data-scene="'+unit+'"></canvas>':'')+
-      '<span class="party">'+portrait+'</span></button><div class="offer-copy"><h3 id="offer-title-'+index+'">'+offer.title+
-      '</h3><div class="offer-meta">'+stats+'</div><p class="offer-effect"></p></div></div>'+
-      '<button class="gold offer-buy" data-buy-index="'+index+'"></button></article>';
+    const titleId='offer-title-'+index;
+    return '<article class="offer" aria-labelledby="'+titleId+'">'+
+      '<button type="button" class="offer-art" '+artButton+' aria-label="查看 '+offer.title+' 详情">'+
+      '<span class="party">'+portrait+'</span></button>'+
+      '<div class="offer-copy"><h3 id="'+titleId+'">'+offer.title+'</h3>'+stats+'</div>'+
+      '<div class="offer-preview">'+(unit?unitTags(unit):'')+'<p class="offer-effect"></p></div>'+
+      '<button type="button" class="gold offer-buy" data-buy-index="'+index+'"></button></article>';
   }).join('');
   root.innerHTML=header(run,'shop')+'<section class="shop" aria-label="商店"><div class="shop-floor">'+
-    '<section class="reel-panel" id="wheel-panel" aria-label="4×4 商店轮盘"><div id="reels" class="wheel-board"></div>'+
-    '<p id="spin-event" class="spin-event" role="status"></p></section>'+
-    '<div class="shop-command"><div class="shop-actions" role="group" aria-label="回合操作">'+
+    '<div class="shop-actions" role="group" aria-label="回合操作">'+
     '<button class="primary fight-button" data-act="fight"></button>'+
-    '<button class="primary fight-button" data-act="reset" hidden><span>重新开局</span><small>金币不足以招募</small></button>'+
+    '<button class="primary fight-button" data-act="reset" hidden><span>重新开局</span><small>金币不足以招募</small></button></div>'+
+    '<section class="reel-panel" id="wheel-panel" aria-label="4×4 商店轮盘"><div id="reels" class="wheel-board"></div>'+
     '<div class="spin-controls"><button class="gold spin-button" data-act="spin" aria-describedby="wheel-status"></button>'+
     '<button class="spin-button skip-button" data-act="skip-spin" hidden>跳过动画</button>'+
-    '<small id="wheel-status" class="sr-only"></small></div></div>'+
+    '<small id="wheel-status" class="sr-only"></small></div></section>'+
+    '<p id="spin-event" class="spin-event" role="status"></p>'+
+    '<section class="shelf-panel" aria-label="商店商品"><div class="offers">'+offers+'</div>'+
+    '<button class="refresh" data-act="refresh"><span class="refresh-copy"><span>刷新商品</span>'+
+    '<span class="offer-cost">'+coin+REFRESH_COST+' 金</span></span></button>'+
+    '<p id="purchase-status" class="sr-only" role="status"></p></section>'+
     '<section class="tag-shelf" aria-labelledby="tag-shelf-title"><h2 id="tag-shelf-title">标签架</h2>'+
     '<div id="held-tags" class="held-tags"></div></section></div>'+
-    '<section class="shelf-panel" aria-labelledby="shelf-title"><div class="shelf-heading"><h1 id="shelf-title">商店</h1>'+
-    '<button class="quiet refresh" data-act="refresh">刷新 <span class="offer-cost">'+coin+REFRESH_COST+
-    ' 金</span></button></div><div class="offers">'+offers+'</div>'+
-    '<p id="purchase-status" class="sr-only" role="status"></p></section></div>'+
     '<div class="shop-details"><details><summary>我的阵容 <small id="roster-count"></small></summary>'+
     '<div id="shop-roster"></div></details><details><summary>下战对手 <small>'+encounter.name+
     '</small></summary><div class="roster enemy">'+enemyRoster(run.stage)+'</div></details>'+
@@ -168,5 +170,4 @@ export function renderShop(root:HTMLElement,run:Run){
   paintShopBoard(root,run);
   paintShopControls(root,run);
   paintSpinSummary(root,run);
-  for(const canvas of root.querySelectorAll<HTMLCanvasElement>('canvas[data-scene]'))scenery(canvas,canvas.dataset.scene!);
 }
