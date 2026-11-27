@@ -31,3 +31,22 @@ npm run dev
 商店或结算页的「导出阵容日志」会下载 NDJSON，每行对应一场战斗。可用 `pandas.read_json("rollbound-lineups.ndjson", lines=True)` 读取。服务端只保存规则版本、随机种子、开战时间、轮次、阵容、已装填火球数与战果。
 
 部署记录版时，从仓库根目录用 `VITE_LINEUP_LOGGING=1 npm --prefix web run build` 构建客户端，再运行 `node web/scripts/build-recorded-site.mjs` 打包 Worker。部署目录的 `.openai/hosting.json` 声明 `d1: "DB"`，生产数据库部署时应用 `drizzle/` 的迁移。阵容日志采集由记录版启用。
+
+## GitHub Pages 试玩采集
+
+配置上传地址后，完成一局远征时，网页版会把该局已收集的开场阵容、轮次、规则版本、随机种子、战果和步数合成一个 JSON。Worker 把它写到 Workers KV 的 `run:<runId>`，相同记录重试使用同一个键。当前远征的待提交阵容随游戏存档一起恢复，提交成功后从该存档移除明细。已结束的旧局没有可补录的阵容。单局报告使用 `schemaVersion: 1`，每场战斗沿用 `LineupRecord`。
+
+从 Cloudflare 登录后，在 `web/` 运行以下命令，可部署独立 Worker 并自动绑定 KV。
+
+```sh
+npx wrangler@4 login
+npx wrangler@4 deploy
+```
+
+在 GitHub 仓库的 Actions variables 中设置 `ROLLBOUND_PLAYTEST_RUNS_URL` 为已部署的 Worker 地址加 `/api/lineup-runs`，然后运行 **Build and deploy ROLLBOUND**。此变量只包含公开的上传地址。Worker 从 `https://saiqi1999.github.io` 接收 JSON，开启请求限流和数据格式校验。
+
+分析时由受授权的环境设置 `CLOUDFLARE_ACCOUNT_ID`、`ROLLBOUND_KV_NAMESPACE_ID` 和仅有 **Workers KV Storage Read** 权限的 `CLOUDFLARE_API_TOKEN`。从仓库根目录导出，每行是一局，可展开 `battles` 按规则版本、轮次或战果分析。
+
+```sh
+node web/scripts/export-playtest-runs.mjs > rollbound-playtest-runs.ndjson
+```

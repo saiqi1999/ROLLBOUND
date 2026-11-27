@@ -48,7 +48,7 @@ function isUnit(value:unknown):value is LineupUnit{
     (u.cloneOf===undefined||(typeof u.cloneOf==='string'&&u.id===u.cloneOf+'-clone'&&u.tag===undefined));
 }
 
-function isLineupRecord(value:unknown):value is LineupRecord{
+export function isLineupRecord(value:unknown):value is LineupRecord{
   if(!value||typeof value!=='object')return false;
   const row=value as Partial<LineupRecord>;
   if(typeof row.battleId!=='string'||!idPattern.test(row.battleId)||typeof row.runId!=='string'||!idPattern.test(row.runId)||
@@ -62,7 +62,7 @@ function isLineupRecord(value:unknown):value is LineupRecord{
   return new Set(roster.map(unit=>unit.id)).size===roster.length;
 }
 
-async function readBody(request:Request){
+export async function readBody(request:Request,maxBytes=limit){
   const reader=request.body?.getReader();
   if(!reader)return;
   const decoder=new TextDecoder();
@@ -71,7 +71,7 @@ async function readBody(request:Request){
     const {done,value}=await reader.read();
     if(done)return text+decoder.decode();
     read+=value.byteLength;
-    if(read>limit){
+    if(read>maxBytes){
       await reader.cancel();
       return;
     }

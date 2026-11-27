@@ -15,8 +15,8 @@ function newId(){
   return Array.from(crypto.getRandomValues(new Uint32Array(4)),value=>value.toString(16).padStart(8,'0')).join('');
 }
 
-export function startLineupLog(run:Run){
-  if(!lineupLogging||!run.battle)return;
+export function startLineupLog(run:Run,enabled=lineupLogging){
+  if(!enabled||!run.battle)return;
   run.lineupRunId??=newId();
   run.battle.lineupLog={id:newId(),startedAt:Date.now(),ruleset:BATTLE_RULESET};
 }

@@ -9,7 +9,9 @@ import {unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {applyMagicTag} from './shop/tags.ts';
 import {loadRun,saveRun} from './save.ts';
-import {flushLineupLogs,queueLineup,startLineupLog} from './lineup-client.ts';
+import {flushLineupLogs,lineupLogging,queueLineup,startLineupLog} from './lineup-client.ts';
+import {playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
+import {recordPlaytestBattle} from './playtest-run.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
 import {paintShopBoard,paintShopControls,paintSpinSummary,renderShop} from './view/shop.ts';
@@ -29,10 +31,16 @@ let timer=0,startedAt=0,remaining=0,paused=false,speed=1;
 let frames:PlaybackFrame[]=[],frameIndex=0,pending:BattleWindow|undefined,playbackStart:Battle|undefined;
 let replayIndex:number|undefined,resumeAfterDialog=false;
 
+function flushPlaytestRun(){
+  void uploadFinishedPlaytest(run,uploaded=>{if(run===uploaded)saveRun(uploaded);});
+}
+
 function save(){
+  if(playtestEnabled)recordPlaytestBattle(run);
   const stored=saveRun(run);
   document.querySelector('#save-status')!.textContent=stored?'':'浏览器未能保存，本局进度仅在当前标签页有效。';
   if(run.battle&&(run.history.length===0||run.results[run.stage]))queueLineup(run);
+  flushPlaytestRun();
 }
 
 function modal(title:string,html:string){
@@ -376,7 +384,7 @@ app.addEventListener('click',event=>{
     }
     case 'fight':
       if(startBattle(run)){
-        startLineupLog(run);
+        startLineupLog(run,lineupLogging||playtestEnabled);
         paused=false;
         save();
         render();
@@ -412,12 +420,21 @@ document.addEventListener('keydown',event=>{
 });
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&(run.phase==='battle'||replayIndex!==undefined)&&!paused)togglePause();
-  if(!document.hidden)void flushLineupLogs();
+  if(!document.hidden){
+    void flushLineupLogs();
+    flushPlaytestRun();
+  }
 });
 
-window.addEventListener('online',()=>void flushLineupLogs());
+window.addEventListener('online',()=>{
+  void flushLineupLogs();
+  flushPlaytestRun();
+});
 render();
 if(run.phase==='shop')void import('./arena.ts').catch(()=>{/* Battle startup can still use its fallback. */});
 if(!loaded)save();
-else queueLineup(run);
+else{
+  queueLineup(run);
+  flushPlaytestRun();
+}
 void flushLineupLogs();

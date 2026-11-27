@@ -6,6 +6,7 @@ import {createShop,joinPendingRecruits} from './shop/rules.ts';
 import {applyShopEndTags} from './shop/tags.ts';
 import {addTag,type TagInventory} from './magic-tags.ts';
 import {COMBAT_TICK_MS} from './timing.ts';
+import type {PlaytestProgress} from './playtest-run.ts';
 
 export type {Battle,Moment,Outcome,Unit} from './battle/model.ts';
 export {currentAttack,maxHealth} from './battle/unit-state.ts';
@@ -14,6 +15,7 @@ export {simulateBattleWindow} from './battle/resolve.ts';
 export type Run = {
   version:6;seed:number;stage:number;gold:number;nextId:number;
   lineupRunId?:string;
+  playtest?:PlaytestProgress;
   roster:UnitInstance[];pendingRecruits:UnitInstance[];spells:SpellInstance[];spellCasts:number;shop:ShopState;tagInventory:TagInventory;
   phase:'shop'|'battle'|'result'|'end';battle:Battle|null;
   results:Outcome[];log:string[];history:Battle[];
