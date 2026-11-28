@@ -36,7 +36,9 @@ npm run dev
 
 配置上传地址后，完成一局远征时，网页版会把该局已收集的开场阵容、轮次、规则版本、随机种子、战果和步数合成一个 JSON。Worker 把它写到 Workers KV 的 `run:<runId>`，相同记录重试使用同一个键。当前远征的待提交阵容随游戏存档一起恢复，提交成功后从该存档移除明细。已结束的旧局没有可补录的阵容。单局报告使用 `schemaVersion: 1`，每场战斗沿用 `LineupRecord`。
 
-从 Cloudflare 登录后，在 `web/` 运行以下命令，可部署独立 Worker 并自动绑定 KV。
+Cloudflare Workers Builds 使用仓库根目录的 `wrangler.jsonc`。连接 `main` 时，Worker 名填 `rollbound`，根目录留空或填 `/`，Build command 留空，Deploy command 填 `npx --yes wrangler@4 deploy`。部署会自动绑定 `PLAYTEST_RUNS`。
+
+也可以登录 Cloudflare 后，从仓库根目录运行以下命令。
 
 ```sh
 npx wrangler@4 login
