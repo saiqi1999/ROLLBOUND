@@ -33,16 +33,12 @@ async function writeRun(run,id){
 }
 
 const archiveResponse=await requestCloudflare('/values/'+encodeURIComponent(playtestArchiveKey));
-if(archiveResponse.ok){
-  const archive=parseArchive(await archiveResponse.text());
-  for(const [id,run] of Object.entries(archive.runs))await writeRun(run,id);
-}else if(archiveResponse.status===404){
-  await exportLegacyRuns();
-}else{
+if(!archiveResponse.ok&&archiveResponse.status!==404){
   throw Error('Cloudflare KV request failed (HTTP '+archiveResponse.status+').');
 }
+const archive=archiveResponse.ok?parseArchive(await archiveResponse.text()).runs:{};
 
-async function exportLegacyRuns(){
+async function exportIndividualRuns(){
   let cursor='';
   do{
     const query=new URLSearchParams({prefix:'run:',limit:'25'});
@@ -51,10 +47,17 @@ async function exportLegacyRuns(){
     const keys=page.result.map(({name})=>name);
     if(keys.length){
       const {result:{values}}=await callCloudflare('/bulk/get',JSON.stringify({keys,type:'json'}));
-      for(const key of keys)await writeRun(values[key],key.slice('run:'.length));
+      for(const key of keys){
+        const id=key.slice('run:'.length);
+        await writeRun(values[key],id);
+        delete archive[id];
+      }
     }
     const next=page.result_info?.cursor??'';
     if(next&&next===cursor)throw Error('Cloudflare returned the same cursor twice.');
     cursor=next;
   }while(cursor);
 }
+
+await exportIndividualRuns();
+for(const [id,run] of Object.entries(archive))await writeRun(run,id);

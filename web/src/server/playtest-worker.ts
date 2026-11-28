@@ -1,8 +1,9 @@
 import {readBody} from './lineups.ts';
-import {matchMirrors} from './match-mirrors.ts';
-import {isCompletedPlaytestRun,playtestArchiveKey,readArchive,type PlaytestKV} from './playtest-archive.ts';
+import {matchMirrors,type MirrorManifest} from './match-mirrors.ts';
+import {isCompletedPlaytestRun,readArchive,type PlaytestKV} from './playtest-archive.ts';
 
-export {isCompletedPlaytestRun,PlaytestArchive} from './playtest-archive.ts';
+export {isCompletedPlaytestRun} from './playtest-archive.ts';
+export {PlaytestArchive} from './playtest-storage.ts';
 
 type Env = {
   PLAYTEST_ORIGIN:string;
@@ -46,16 +47,25 @@ export async function receivePlaytestRun(request:Request,env:Env):Promise<Respon
     const {success}=await env.PLAYTEST_LIMITER.limit({key});
     if(!success)return new Response(null,{status:429,headers:{...headers,'retry-after':'60'}});
     if(exporting){
-      const archive=await env.PLAYTEST_RUNS.get(playtestArchiveKey)??JSON.stringify(await readArchive(env.PLAYTEST_RUNS));
-      return new Response(archive,{headers:{
-        ...headers,'content-type':'application/json; charset=utf-8',
+      if(env.PLAYTEST_ARCHIVE){
+        await env.PLAYTEST_ARCHIVE.getByName('playtest-runs')
+          .fetch(new Request('https://archive.internal/migrate',{method:'POST'})).catch(()=>undefined);
+      }
+      return Response.json(await readArchive(env.PLAYTEST_RUNS),{headers:{
+        ...headers,
         'content-disposition':'attachment; filename="rollbound-playtest-all.json"',
       }});
     }
     if(reading){
       const ruleset=Number(url.searchParams.get('ruleset'));
       if(!Number.isSafeInteger(ruleset)||ruleset<1)return new Response(null,{status:400,headers});
-      return Response.json(await matchMirrors(env.PLAYTEST_RUNS,ruleset),{headers});
+      const refresh=env.PLAYTEST_ARCHIVE?async(requestedAt:number)=>{
+        const result=await env.PLAYTEST_ARCHIVE.getByName('approved-mirrors').fetch(new Request('https://archive.internal/refresh',{
+          method:'POST',body:String(requestedAt),
+        }));
+        if(result.ok)return await result.json() as MirrorManifest;
+      }:undefined;
+      return Response.json(await matchMirrors(env.PLAYTEST_RUNS,ruleset,refresh),{headers});
     }
     return await storePlaytestRun(request,env.PLAYTEST_ARCHIVE,headers);
   }catch{

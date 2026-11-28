@@ -5,8 +5,8 @@ import {advance,currentAttack,maxHealth,newRun,startBattle} from '../src/engine.
 import {BATTLE_RULESET} from '../src/lineup-log.ts';
 import {finishedPlaytestRun,recordPlaytestBattle} from '../src/playtest-run.ts';
 import {PlaytestArchive,receivePlaytestRun} from '../src/server/playtest-worker.ts';
-import {playtestArchiveKey} from '../src/server/playtest-archive.ts';
-import {approvedMirrorsKey} from '../src/server/match-mirrors.ts';
+import {pendingReviewKey,playtestArchiveKey,runKey} from '../src/server/playtest-archive.ts';
+import {approvedMirrorsKey,mirrorManifestKey,mirrorRefreshKey} from '../src/server/match-mirrors.ts';
 import {recruit} from '../src/shop/rules.ts';
 
 const origin='https://saiqi1999.github.io';
@@ -38,28 +38,37 @@ function finishedRun(){
 
 function storage(limited=false){
   const rows=new Map();
-  const state=new Map();
+  const states=new Map();
+  const objects=new Map();
+  const reads=[];
   let writes=0;
+  let rejectedKey;
   const env={
     PLAYTEST_ORIGIN:origin,
     PLAYTEST_LIMITER:{async limit(){return {success:!limited};}},
     PLAYTEST_RUNS:{
       async get(key){
+        reads.push(...(Array.isArray(key)?key:[key]));
         return Array.isArray(key)?new Map(key.map(name=>[name,rows.get(name)??null])):rows.get(key)??null;
       },
       async list({prefix}){return {list_complete:true,keys:[...rows.keys()].filter(key=>key.startsWith(prefix)).map(name=>({name}))};},
-      async put(key,value){writes++;rows.set(key,value);},
+      async put(key,value){
+        if(key===rejectedKey)throw Error('KV write failed.');
+        writes++;rows.set(key,value);
+      },
+      async delete(key){rows.delete(key);},
     },
   };
-  function restart(){
-    const archive=new PlaytestArchive({storage:{
+  env.PLAYTEST_ARCHIVE={getByName(name){
+    if(!states.has(name))states.set(name,new Map());
+    const state=states.get(name);
+    if(!objects.has(name))objects.set(name,new PlaytestArchive({storage:{
       async get(key){return state.get(key);},
       async put(key,value){state.set(key,value);},
-    }},env);
-    env.PLAYTEST_ARCHIVE={getByName:()=>archive};
-  }
-  restart();
-  return {env,rows,restart,writes:()=>writes};
+    }},env));
+    return objects.get(name);
+  }};
+  return {env,rows,reads,restart:()=>objects.clear(),writes:()=>writes,rejectPut:key=>{rejectedKey=key;}};
 }
 
 function request(value,{method='POST',source=origin}={}){
@@ -101,18 +110,22 @@ test('the final victory is eligible before the player clicks through to the run 
   assert.equal(finishedPlaytestRun(run).battles[0].round,encounters.length);
 });
 
-test('the Worker accepts the Pages origin and deduplicates retries in the full archive',async()=>{
-  const {env,rows,writes}=storage();
+test('a replay uses its original timestamped review key even after a writer restart',async()=>{
+  const {env,rows,restart,writes}=storage();
   const report=finishedPlaytestRun(finishedRun());
   const preflight=await receivePlaytestRun(request(null,{method:'OPTIONS'}),env);
   assert.equal(preflight.status,204);
   assert.equal(preflight.headers.get('access-control-allow-origin'),origin);
   assert.equal((await receivePlaytestRun(request(report),env)).status,201);
+  restart();
+  const run=rows.get(runKey(report.runId));
+  rows.delete(runKey(report.runId)); // Simulate reading KV from a cold location.
   assert.equal((await receivePlaytestRun(request(report),env)).status,204);
   assert.equal((await receivePlaytestRun(request({...report,finishedAt:report.finishedAt+1}),env)).status,409);
-  assert.deepEqual([...rows.keys()],[playtestArchiveKey]);
-  assert.deepEqual(JSON.parse(rows.get(playtestArchiveKey)).runs[report.runId],report);
-  assert.equal(writes(),1);
+  assert.equal(rows.has(runKey(report.runId)),false);
+  assert.deepEqual([...rows.keys()],[pendingReviewKey(report)]);
+  assert.deepEqual(JSON.parse(run),report);
+  assert.equal(writes(),2);
 });
 
 test('the Pages export downloads complete runs without including the approved mirror pack',async()=>{
@@ -135,24 +148,25 @@ test('the Pages export downloads complete runs without including the approved mi
   assert.equal(writes(),0);
 });
 
-test('concurrent uploads keep legacy and new runs together and a cold writer rejects a stale revision',async()=>{
-  const {env,rows,restart}=storage();
+test('concurrent same-timestamp uploads and backfilled runs export together without rewriting the legacy key',async()=>{
+  const {env,rows}=storage();
   const legacy=finishedPlaytestRun(finishedRun());
   const first=withRunId(legacy,'b'.repeat(32));
   const second=withRunId(legacy,'c'.repeat(32));
-  rows.set('run:'+legacy.runId,JSON.stringify(legacy));
+  const original=JSON.stringify({schemaVersion:1,revision:5,runs:{[legacy.runId]:legacy}});
+  rows.set(playtestArchiveKey,original);
   assert.deepEqual((await Promise.all([first,second].map(report=>receivePlaytestRun(request(report),env))))
     .map(response=>response.status),[201,201]);
-  const complete=rows.get(playtestArchiveKey);
-  const archive=JSON.parse(complete);
-  assert.deepEqual(archive.runs,{[legacy.runId]:legacy,[first.runId]:first,[second.runId]:second});
-  assert.equal(rows.size,2);
-  rows.set(playtestArchiveKey,JSON.stringify({...archive,revision:archive.revision-1,runs:{[legacy.runId]:legacy}}));
-  restart();
-  assert.equal((await receivePlaytestRun(request(second),env)).status,503);
-  assert.equal(JSON.parse(rows.get(playtestArchiveKey)).revision,archive.revision-1);
-  rows.set(playtestArchiveKey,complete);
-  assert.equal((await receivePlaytestRun(request(second),env)).status,204);
+  assert.notEqual(pendingReviewKey(first),pendingReviewKey(second));
+  assert.equal(rows.has(pendingReviewKey(first)),true);
+  assert.equal(rows.has(pendingReviewKey(second)),true);
+  assert.equal(rows.get(playtestArchiveKey),original);
+  const download=()=>receivePlaytestRun(new Request('https://playtest.example/api/playtest-export',{headers:{origin}}),env);
+  const expected={[legacy.runId]:legacy,[first.runId]:first,[second.runId]:second};
+  assert.deepEqual((await (await download()).json()).runs,expected);
+  assert.deepEqual(JSON.parse(rows.get(runKey(legacy.runId))),legacy);
+  rows.delete(playtestArchiveKey);
+  assert.deepEqual((await (await download()).json()).runs,expected);
 });
 
 test('manual approvals serve only the selected rounds and restore mirrored stats and reserves',async()=>{
@@ -170,8 +184,12 @@ test('manual approvals serve only the selected rounds and restore mirrored stats
   assert.deepEqual((await none.json()).rounds,{});
   const approval=JSON.stringify({schemaVersion:1,opponents:[{runId:report.runId,ruleset:BATTLE_RULESET,rounds:[4,5,7]}]});
   rows.set(approvedMirrorsKey,approval);
+  rows.set(pendingReviewKey(report),JSON.stringify({runId:report.runId}));
+  rows.set(mirrorRefreshKey,String(timestamp+100));
   const mirrors=await (await receivePlaytestRun(mirrorRequest(),env)).json();
   assert.deepEqual(mirrors.rounds,{4:{starters:[veteran],reserves:[reserve]},7:{starters:[veteran],reserves:[reserve]}});
+  assert.deepEqual(JSON.parse(rows.get(mirrorManifestKey)).counts,{[BATTLE_RULESET]:{4:1,7:1}});
+  assert.equal(rows.has(pendingReviewKey(report)),false);
   assert.deepEqual((await (await receivePlaytestRun(mirrorRequest(BATTLE_RULESET-1),env)).json()).rounds,{});
   assert.equal((await receivePlaytestRun(request(report),env)).status,204);
   assert.equal(rows.get(approvedMirrorsKey),approval);
@@ -194,6 +212,45 @@ test('manual approvals serve only the selected rounds and restore mirrored stats
     assert.equal(enemies.length,3);
     assert.equal(clone.cloneOf,starter.id);
   }
+});
+
+test('refresh numbers each round from one and a failed rebuild keeps the previous generation active',async t=>{
+  const {env,rows,reads,rejectPut}=storage();
+  const base=finishedPlaytestRun(finishedRun());
+  const earlier={...base,battles:[{...base.battles[1],round:4}]};
+  const later=withRunId({...earlier,finishedAt:earlier.finishedAt+10},'b'.repeat(32));
+  const seventh=withRunId({...earlier,battles:[{...earlier.battles[0],round:7}]},'c'.repeat(32));
+  for(const run of [earlier,later,seventh])rows.set(runKey(run.runId),JSON.stringify(run));
+  const approved=(...items)=>JSON.stringify({schemaVersion:1,opponents:items.map(([run,round])=>({
+    runId:run.runId,ruleset:BATTLE_RULESET,rounds:[round],
+  }))});
+  rows.set(approvedMirrorsKey,approved([later,4],[earlier,4],[seventh,7]));
+  rows.set(mirrorRefreshKey,String(timestamp+100));
+  t.mock.method(Math,'random',()=>0.99);
+  const match=async()=>await (await receivePlaytestRun(mirrorRequest(),env)).json();
+  assert.deepEqual(Object.keys((await match()).rounds),['4','7']);
+  const first=JSON.parse(rows.get(mirrorManifestKey));
+  const fourth='approvedkey_version1:4:4:'+first.generation+':';
+  assert.deepEqual(first.counts,{4:{4:2,7:1}});
+  assert.equal(JSON.parse(rows.get(fourth+'1')).runId,earlier.runId);
+  assert.equal(JSON.parse(rows.get(fourth+'2')).runId,later.runId);
+  reads.length=0;
+  await match();
+  assert.equal(reads.includes(fourth+'2'),true);
+  assert.equal(reads.includes(fourth+'1'),false);
+  assert.equal(reads.some(key=>key.startsWith('run:')),false);
+
+  rows.set(approvedMirrorsKey,approved([earlier,4]));
+  assert.deepEqual(Object.keys((await match()).rounds),['4','7']);
+  rows.set(mirrorRefreshKey,String(timestamp+200));
+  rejectPut(mirrorManifestKey);
+  assert.deepEqual(Object.keys((await match()).rounds),['4','7']);
+  assert.deepEqual(JSON.parse(rows.get(mirrorManifestKey)),first);
+  rejectPut(undefined);
+  assert.deepEqual(Object.keys((await match()).rounds),['4']);
+  const second=JSON.parse(rows.get(mirrorManifestKey));
+  assert.notEqual(first.generation,second.generation);
+  assert.deepEqual(second.counts,{4:{4:1}});
 });
 
 test('the Worker rejects foreign origins, read requests, and payloads with unrelated fields',async()=>{
