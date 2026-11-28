@@ -1,6 +1,9 @@
 import {isMirrorLineup,isMirrorRound,mirrorRounds,type MirrorBundle} from '../mirror-lineups.ts';
 import type {PlaytestRun} from '../playtest-run.ts';
-import {isCompletedPlaytestRun,pendingReviewKey,readLegacyArchive,runIdPattern,runKey,type PlaytestKV} from './playtest-archive.ts';
+import {
+  isCompletedPlaytestRun,legacyRunKey,listRunPages,playtestRunPrefix,readLegacyArchive,
+  readRunValue,runIdForKey,runIdPattern,type PlaytestKV,
+} from './playtest-archive.ts';
 
 export const approvedMirrorsKey='mirror:approved';
 const approvedPrefix='approvedkey_version1:';
@@ -27,20 +30,41 @@ async function readApprovals(kv:PlaytestKV){
 }
 
 async function readApprovedRuns(kv:PlaytestKV,approvals:Approval[]){
-  const ids=[...new Set(approvals.map(item=>item.runId))];
+  const missing=new Set(approvals.map(item=>item.runId));
   const runs=new Map<string,PlaytestRun>();
+  if(!missing.size)return runs;
+  for await(const page of listRunPages(kv,playtestRunPrefix,1000)){
+    const keys=page.filter(key=>missing.has(runIdForKey(key)??''));
+    for(let i=0;i<keys.length;i+=25){
+      const batch=keys.slice(i,i+25);
+      const values=await kv.get(batch);
+      for(const key of batch){
+        const run=readRunValue(key,JSON.parse(values.get(key)??'null'));
+        if(run){
+          runs.set(run.runId,run);
+          missing.delete(run.runId);
+        }
+      }
+    }
+    if(!missing.size)return runs;
+  }
+
+  const ids=[...missing];
   for(let i=0;i<ids.length;i+=25){
     const batch=ids.slice(i,i+25);
-    const values=await kv.get(batch.map(runKey));
+    const values=await kv.get(batch.map(legacyRunKey));
     for(const id of batch){
-      const run=JSON.parse(values.get(runKey(id))??'null');
-      if(isCompletedPlaytestRun(run)&&run.runId===id)runs.set(id,run);
+      const key=legacyRunKey(id);
+      const run=readRunValue(key,JSON.parse(values.get(key)??'null'));
+      if(run){
+        runs.set(id,run);
+        missing.delete(id);
+      }
     }
   }
-  if(runs.size<ids.length){
+  if(missing.size){
     const archive=await readLegacyArchive(kv);
-    for(const id of ids){
-      if(runs.has(id))continue;
+    for(const id of missing){
       const run=archive?.runs[id];
       if(isCompletedPlaytestRun(run)&&run.runId===id)runs.set(id,run);
     }
@@ -63,7 +87,6 @@ export async function refreshMirrorPool(kv:PlaytestKV,requestedAt:number){
   const runs=await readApprovedRuns(kv,approvals);
   const manifest:MirrorManifest={schemaVersion:1,generation:requestedAt+'-'+crypto.randomUUID(),requestedAt,counts:{}};
   const slots:Slot[]=[];
-  const reviewed=new Set<string>();
   const included=new Set<string>();
   approvals.sort((a,b)=>(runs.get(a.runId)?.finishedAt??0)-(runs.get(b.runId)?.finishedAt??0)||
     a.runId.localeCompare(b.runId));
@@ -83,7 +106,6 @@ export async function refreshMirrorPool(kv:PlaytestKV,requestedAt:number){
         key:mirrorSlotKey(approval.ruleset,round,manifest.generation,id),
         value:JSON.stringify({runId:run.runId,lineup}),
       });
-      reviewed.add(pendingReviewKey(run));
     }
   }
 
@@ -92,14 +114,6 @@ export async function refreshMirrorPool(kv:PlaytestKV,requestedAt:number){
   }
   // Stale readers can finish using their old generation while this one propagates.
   await kv.put(mirrorManifestKey,JSON.stringify(manifest));
-  const reviewKeys=[...reviewed];
-  for(let i=0;i<reviewKeys.length;i+=25){
-    try{
-      const batch=reviewKeys.slice(i,i+25);
-      const pending=await kv.get(batch);
-      await Promise.all(batch.filter(key=>pending.get(key)!=null).map(key=>kv.delete(key)));
-    }catch(error){console.warn('Mirror pool published, but a review marker could not be cleared.',error);}
-  }
   return manifest;
 }
 

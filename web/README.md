@@ -34,9 +34,9 @@ npm run dev
 
 ## GitHub Pages 试玩采集
 
-配置上传地址后，完成一局远征时，网页版会上传开场阵容、轮次、规则版本、随机种子、战果和步数。Worker 把完整记录写入 `run:<runId>`，并创建一个 `newkey_version1:<结算时间戳>:<runId>` 待审核标记。相同上报重试复用原来的 key。当前远征的待提交阵容随存档恢复，提交成功后从存档移除明细。单局报告使用 `schemaVersion: 1`，每场战斗沿用 `LineupRecord`。
+配置上传地址后，完成一局远征时，网页版会上传开场阵容、轮次、规则版本、随机种子、战果和步数。Worker 把完整记录写入 `newkey_version1:<16 位结算毫秒时间戳>:<runId>`。相同上报重试复用原来的 key。当前远征的待提交阵容随存档恢复，提交成功后从存档移除明细。单局报告使用 `schemaVersion: 1`，每场战斗沿用 `LineupRecord`。
 
-逐局记录在导出时按 `run:` 前缀分页汇总。导出还会逐批把旧 `playtest:all` 的历史对局补进独立 key，并使用 `runId` 去重。旧包保留作迁移来源，新局写入独立 key。
+导出按 `newkey_version1:` 前缀分页汇总。部署后的导出会分批迁移 `run:` 和 `playtest:all`。Worker 校验新 key 的完整内容和可枚举性后清理迁移来源。过渡期间导出按 `runId` 合并两种格式，`migrationComplete` 表示旧 key 已清理完毕。
 
 Cloudflare Workers Builds 使用仓库根目录的 `wrangler.jsonc`。连接 `main` 时，Worker 名填 `rollbound`，根目录留空或填 `/`，Build command 留空，Deploy command 填 `npx --yes wrangler@4 deploy`。部署会绑定 `PLAYTEST_RUNS` 和串行写入使用的 `PLAYTEST_ARCHIVE`。
 
@@ -70,4 +70,4 @@ node web/scripts/export-playtest-runs.mjs > rollbound-playtest-runs.ndjson
 }
 ```
 
-空名单用 `{"schemaVersion":1,"opponents":[]}`。要发布编辑后的名单，在同一命名空间设置 `approvedkey_version1:refresh`，Value 填本次刷新的 Unix 毫秒时间戳，例如 `1795840507465`。每次刷新使用一个大于上次的时间戳。下次开局匹配时，Worker 会按结算时间为每个规则版本和轮次重新排 `1…N`，把快照写到 `approvedkey_version1:<ruleset>:<round>:<批次>:<id>`，再更新 `approvedkey_version1:manifest` 的批次和数量。获得认可的对局会移出待审核索引。游戏开局从当前批次的 `1…N` 之间随机取阵容。
+空名单用 `{"schemaVersion":1,"opponents":[]}`。要发布编辑后的名单，在同一命名空间设置 `approvedkey_version1:refresh`，Value 填本次刷新的 Unix 毫秒时间戳，例如 `1795840507465`。每次刷新使用一个大于上次的时间戳。下次开局匹配时，Worker 会按结算时间为每个规则版本和轮次重新排 `1…N`，把快照写到 `approvedkey_version1:<ruleset>:<round>:<批次>:<id>`，再更新 `approvedkey_version1:manifest` 的批次和数量。完整对局可通过 `newkey_version1:` 导出。游戏开局从当前批次的 `1…N` 之间随机取阵容。

@@ -3,6 +3,8 @@ import type {PlaytestRun} from '../playtest-run.ts';
 import {isLineupRecord} from './lineups.ts';
 
 export const playtestArchiveKey='playtest:all';
+export const legacyRunPrefix='run:';
+export const playtestRunPrefix='newkey_version1:';
 export const runIdPattern=/^[0-9a-f]{32}$/;
 export type PlaytestKV={
   get(key:string):Promise<string|null>;
@@ -19,12 +21,16 @@ export type Archive={schemaVersion:1;revision:number;runs:Record<string,Playtest
 const runFields=new Set(['schemaVersion','runId','seed','finishedAt','battles']);
 const battleFields=new Set(['battleId','runId','round','seed','ruleset','startedAt','fireballs','lineup','result','ticks']);
 
-export function runKey(runId:string){
-  return 'run:'+runId;
+export function legacyRunKey(runId:string){
+  return legacyRunPrefix+runId;
 }
 
-export function pendingReviewKey(run:PlaytestRun){
-  return 'newkey_version1:'+String(run.finishedAt).padStart(16,'0')+':'+run.runId;
+export function runKey(run:PlaytestRun){
+  return playtestRunPrefix+String(run.finishedAt).padStart(16,'0')+':'+run.runId;
+}
+
+export function runIdForKey(key:string){
+  return /^(?:run:|newkey_version1:\d{16}:)([0-9a-f]{32})$/.exec(key)?.[1];
 }
 
 export function isCompletedPlaytestRun(value:unknown):value is PlaytestRun{
@@ -59,24 +65,36 @@ export function parseArchive(serialized:string):Archive{
   return archive;
 }
 
-async function readIndividualRuns(kv:PlaytestKV){
-  const runs:Archive['runs']={};
+export function readRunValue(key:string,value:unknown):PlaytestRun|undefined{
+  if(value==null)return;
+  const id=runIdForKey(key);
+  if(isCompletedPlaytestRun(value)&&value.runId===id&&(key===runKey(value)||key===legacyRunKey(value.runId)))return value;
+  // Older deployments wrote a review pointer at the timestamped key.
+  if(id&&key.startsWith(playtestRunPrefix)&&typeof value==='object'&&
+    Object.keys(value).length===1&&'runId' in value&&value.runId===id)return;
+  throw Error('Invalid playtest record at '+key+'.');
+}
+
+export async function* listRunPages(kv:PlaytestKV,prefix:string,limit=25){
   let cursor:string|undefined;
   do{
-    const page=await kv.list({prefix:'run:',limit:25,...(cursor?{cursor}:{})});
-    const keys=page.keys.map(key=>key.name);
-    if(keys.length){
-      const values=await kv.get(keys);
-      for(const key of keys){
-        const value=JSON.parse(values.get(key)??'null');
-        if(!isCompletedPlaytestRun(value)||key!==runKey(value.runId))throw Error('Playtest run unavailable.');
-        runs[value.runId]=value;
-      }
-    }
+    const page=await kv.list({prefix,limit,...(cursor?{cursor}:{})});
+    if(page.keys.length)yield page.keys.map(key=>key.name);
     if(page.list_complete)break;
     if(!page.cursor||page.cursor===cursor)throw Error('Invalid playtest archive cursor.');
     cursor=page.cursor;
   }while(cursor);
+}
+
+async function readIndividualRuns(kv:PlaytestKV,prefix:string){
+  const runs:Archive['runs']={};
+  for await(const keys of listRunPages(kv,prefix)){
+    const values=await kv.get(keys);
+    for(const key of keys){
+      const run=readRunValue(key,JSON.parse(values.get(key)??'null'));
+      if(run)runs[run.runId]=run;
+    }
+  }
   return runs;
 }
 
@@ -85,7 +103,10 @@ export async function readLegacyArchive(kv:PlaytestKV){
   return stored===null?undefined:parseArchive(stored);
 }
 
-export async function readArchive(kv:PlaytestKV):Promise<Archive>{
-  const [legacy,runs]=await Promise.all([readLegacyArchive(kv),readIndividualRuns(kv)]);
-  return {schemaVersion:1,revision:legacy?.revision??0,runs:{...legacy?.runs,...runs}};
+export async function readArchive(kv:PlaytestKV,migrationComplete=false):Promise<Archive>{
+  if(migrationComplete)return {schemaVersion:1,revision:0,runs:await readIndividualRuns(kv,playtestRunPrefix)};
+  const [archive,legacy,runs]=await Promise.all([
+    readLegacyArchive(kv),readIndividualRuns(kv,legacyRunPrefix),readIndividualRuns(kv,playtestRunPrefix),
+  ]);
+  return {schemaVersion:1,revision:archive?.revision??0,runs:{...archive?.runs,...legacy,...runs}};
 }

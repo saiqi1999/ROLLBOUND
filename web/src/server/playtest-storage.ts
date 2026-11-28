@@ -1,15 +1,25 @@
 import type {PlaytestRun} from '../playtest-run.ts';
-import {isCompletedPlaytestRun,pendingReviewKey,readLegacyArchive,runKey,type Archive,type PlaytestKV} from './playtest-archive.ts';
+import {
+  isCompletedPlaytestRun,legacyRunKey,legacyRunPrefix,listRunPages,playtestArchiveKey,readLegacyArchive,
+  readRunValue,runKey,type PlaytestKV,
+} from './playtest-archive.ts';
 import {refreshMirrorPool,type MirrorManifest} from './match-mirrors.ts';
 
 type ArchiveState={storage:{get<T>(key:string):Promise<T|undefined>;put(key:string,value:unknown):Promise<void>}};
-type Migration={revision:number;offset:number};
+type LegacyArchiveProgress={revision:number;offset:number};
+type Receipt=string|{digest:string};
+const migrationCompleteKey='timestamped-migration-complete';
+const batchSize=16;
+
+async function digestOf(body:string){
+  const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(body)));
+  return Array.from(hash,byte=>byte.toString(16).padStart(2,'0')).join('');
+}
 
 export class PlaytestArchive{
   private state:ArchiveState;
   private kv:PlaytestKV;
   private pending=Promise.resolve();
-  private legacy?:Archive;
 
   constructor(state:ArchiveState,env:{PLAYTEST_RUNS:PlaytestKV}){
     this.state=state;
@@ -48,49 +58,107 @@ export class PlaytestArchive{
   }
 
   private async append(run:PlaytestRun){
-    const key=runKey(run.runId);
+    const key=runKey(run);
     const body=JSON.stringify(run);
-    const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(body)));
-    const digest=Array.from(hash,byte=>byte.toString(16).padStart(2,'0')).join('');
+    const digest=await digestOf(body);
     const digestKey='digest:'+run.runId;
-    const accepted=await this.state.storage.get<string>(digestKey);
-    if(accepted!==undefined)return accepted===digest?204:409;
+    const accepted=await this.state.storage.get<Receipt>(digestKey);
+    if(typeof accepted==='string')return accepted===digest?204:409;
+    if(accepted&&accepted.digest!==digest)return 409;
 
-    this.legacy??=await readLegacyArchive(this.kv);
-    const previous=this.legacy?.runs[run.runId];
     const stored=await this.kv.get(key);
-    if((previous&&JSON.stringify(previous)!==body)||(stored!==null&&stored!==body))return 409;
-    if(stored===null){
-      if(!previous){
-        const pending=pendingReviewKey(run);
-        if(await this.kv.get(pending)===null)await this.kv.put(pending,JSON.stringify({runId:run.runId}));
-      }
-      await this.kv.put(key,body);
+    if(stored===body){
+      await this.state.storage.put(digestKey,digest);
+      return 204;
     }
+    if(stored!==null&&readRunValue(key,JSON.parse(stored)))return 409;
+    if(!accepted&&!await this.state.storage.get<boolean>(migrationCompleteKey)){
+      const oldKey=legacyRunKey(run.runId);
+      const [oldValue,archive]=await Promise.all([this.kv.get(oldKey),readLegacyArchive(this.kv)]);
+      const previous=[readRunValue(oldKey,JSON.parse(oldValue??'null')),archive?.runs[run.runId]].filter(Boolean);
+      if(previous.length){
+        if(previous.some(value=>JSON.stringify(value)!==body))return 409;
+        await this.state.storage.put(digestKey,digest);
+        return 204;
+      }
+    }
+    // Reserve the ID before writing KV so a failed or retried upload cannot change its timestamp.
+    if(!accepted)await this.state.storage.put(digestKey,{digest});
+    await this.kv.put(key,body);
     await this.state.storage.put(digestKey,digest);
-    return previous||stored!==null?204:201;
+    return 201;
   }
 
   private async migrate(){
+    if(await this.state.storage.get<boolean>(migrationCompleteKey))return 204;
     const archive=await readLegacyArchive(this.kv);
-    if(!archive)return 204;
-    const saved=await this.state.storage.get<Migration>('legacy-migration');
-    const offset=saved?.revision===archive.revision?saved.offset:0;
-    const ids=Object.keys(archive.runs).sort();
-    const batch=ids.slice(offset,offset+16);
-    if(!batch.length)return 204;
-    const values=await this.kv.get(batch.map(runKey));
-    const writes=await Promise.allSettled(batch.map(async id=>{
-      const run=archive.runs[id];
-      if(!isCompletedPlaytestRun(run)||run.runId!==id)throw Error('Invalid legacy run.');
-      const key=runKey(id);
+    for await(const keys of listRunPages(this.kv,legacyRunPrefix,batchSize)){
+      const values=await this.kv.get(keys);
+      const runs:PlaytestRun[]=[];
+      for(const key of keys){
+        const run=readRunValue(key,JSON.parse(values.get(key)??'null'));
+        if(!run)continue;
+        const other=archive?.runs[run.runId];
+        if(other&&JSON.stringify(other)!==JSON.stringify(run))throw Error('Conflicting legacy playtest copies.');
+        runs.push(run);
+      }
+      if(runs.length&&await this.copyAndVerify(runs)){
+        const deletions=await Promise.allSettled(runs.map(run=>this.kv.delete(legacyRunKey(run.runId))));
+        if(deletions.some(result=>result.status==='rejected'))throw Error('Legacy playtest cleanup incomplete.');
+      }
+      return 202;
+    }
+    if(archive){
+      await this.migrateLegacyArchive(archive.revision,archive.runs);
+      return 202;
+    }
+    await this.state.storage.put(migrationCompleteKey,true);
+    return 204;
+  }
+
+  private async migrateLegacyArchive(revision:number,runs:Record<string,PlaytestRun>){
+    const saved=await this.state.storage.get<LegacyArchiveProgress>('timestamped-legacy-archive');
+    const ids=Object.keys(runs).sort();
+    const offset=saved?.revision===revision?saved.offset:0;
+    const batch=ids.slice(offset,offset+batchSize).map(id=>{
+      const run=runs[id];
+      if(!isCompletedPlaytestRun(run)||run.runId!==id)throw Error('Invalid legacy archive record.');
+      return run;
+    });
+    if(batch.length&&!await this.copyAndVerify(batch))return;
+    const next=offset+batch.length;
+    if(next<ids.length){
+      await this.state.storage.put('timestamped-legacy-archive',{revision,offset:next});
+      return;
+    }
+    await this.kv.delete(playtestArchiveKey);
+  }
+
+  private async copyAndVerify(runs:PlaytestRun[]){
+    const entries=runs.map(run=>({run,key:runKey(run),body:JSON.stringify(run)}));
+    const values=await this.kv.get(entries.map(entry=>entry.key));
+    const missing=entries.filter(({key,body})=>{
       const stored=values.get(key)??null;
-      const body=JSON.stringify(run);
-      if(stored===null)await this.kv.put(key,body);
-      else if(stored!==body)throw Error('Legacy run conflicts with an individual record.');
-    }));
-    if(writes.some(write=>write.status==='rejected'))throw Error('Legacy archive backfill incomplete.');
-    await this.state.storage.put('legacy-migration',{revision:archive.revision,offset:offset+batch.length});
-    return offset+batch.length===ids.length?204:202;
+      if(stored===body)return false;
+      if(stored!==null&&readRunValue(key,JSON.parse(stored)))throw Error('Conflicting timestamped playtest copy.');
+      return true;
+    });
+    if(missing.length){
+      const writes=await Promise.allSettled(missing.map(({key,body})=>this.kv.put(key,body)));
+      if(writes.some(result=>result.status==='rejected'))throw Error('Playtest migration copy incomplete.');
+      return false;
+    }
+
+    // Verify both read-back and discovery before removing a source used by exports.
+    const listed=await Promise.all(entries.map(({key})=>this.kv.list({prefix:key,limit:1})));
+    if(listed.some((page,index)=>!page.keys.some(entry=>entry.name===entries[index].key)))return false;
+    for(const {run,body} of entries){
+      const key='digest:'+run.runId;
+      const digest=await digestOf(body);
+      const previous=await this.state.storage.get<Receipt>(key);
+      if(previous&&(typeof previous==='string'?previous:previous.digest)!==digest)throw Error('Conflicting playtest receipt.');
+      if(previous!==digest)await this.state.storage.put(key,digest);
+    }
+    return true;
   }
 }

@@ -47,11 +47,11 @@ export async function receivePlaytestRun(request:Request,env:Env):Promise<Respon
     const {success}=await env.PLAYTEST_LIMITER.limit({key});
     if(!success)return new Response(null,{status:429,headers:{...headers,'retry-after':'60'}});
     if(exporting){
-      if(env.PLAYTEST_ARCHIVE){
-        await env.PLAYTEST_ARCHIVE.getByName('playtest-runs')
-          .fetch(new Request('https://archive.internal/migrate',{method:'POST'})).catch(()=>undefined);
-      }
-      return Response.json(await readArchive(env.PLAYTEST_RUNS),{headers:{
+      const migration=await env.PLAYTEST_ARCHIVE?.getByName('playtest-runs')
+        .fetch(new Request('https://archive.internal/migrate',{method:'POST'})).catch(()=>undefined);
+      const migrationComplete=migration?.status===204;
+      const archive=await readArchive(env.PLAYTEST_RUNS,migrationComplete);
+      return Response.json({...archive,migrationComplete},{headers:{
         ...headers,
         'content-disposition':'attachment; filename="rollbound-playtest-all.json"',
       }});

@@ -1,5 +1,5 @@
 import {once} from 'node:events';
-import {isCompletedPlaytestRun,parseArchive,playtestArchiveKey} from '../src/server/playtest-archive.ts';
+import {isCompletedPlaytestRun,legacyRunPrefix,parseArchive,playtestArchiveKey,playtestRunPrefix,readRunValue} from '../src/server/playtest-archive.ts';
 
 const {CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN,ROLLBOUND_KV_NAMESPACE_ID}=process.env;
 const identifier=/^[a-f0-9]{32}$/i;
@@ -38,19 +38,21 @@ if(!archiveResponse.ok&&archiveResponse.status!==404){
 }
 const archive=archiveResponse.ok?parseArchive(await archiveResponse.text()).runs:{};
 
-async function exportIndividualRuns(){
+const exported=new Set();
+async function exportIndividualRuns(prefix){
   let cursor='';
   do{
-    const query=new URLSearchParams({prefix:'run:',limit:'25'});
+    const query=new URLSearchParams({prefix,limit:'25'});
     if(cursor)query.set('cursor',cursor);
     const page=await callCloudflare('/keys?'+query);
     const keys=page.result.map(({name})=>name);
     if(keys.length){
       const {result:{values}}=await callCloudflare('/bulk/get',JSON.stringify({keys,type:'json'}));
       for(const key of keys){
-        const id=key.slice('run:'.length);
-        await writeRun(values[key],id);
-        delete archive[id];
+        const run=readRunValue(key,values[key]);
+        if(!run||exported.has(run.runId))continue;
+        await writeRun(run,run.runId);
+        exported.add(run.runId);
       }
     }
     const next=page.result_info?.cursor??'';
@@ -59,5 +61,8 @@ async function exportIndividualRuns(){
   }while(cursor);
 }
 
-await exportIndividualRuns();
-for(const [id,run] of Object.entries(archive))await writeRun(run,id);
+await exportIndividualRuns(playtestRunPrefix);
+await exportIndividualRuns(legacyRunPrefix);
+for(const [id,run] of Object.entries(archive)){
+  if(!exported.has(id))await writeRun(run,id);
+}
