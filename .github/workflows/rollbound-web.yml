@@ -12,6 +12,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      VITE_PLAYTEST_RUNS_URL: ${{ vars.ROLLBOUND_PLAYTEST_RUNS_URL || 'https://rollbound.cardinal-99.workers.dev/api/lineup-runs' }}
     defaults:
       run:
         working-directory: web
@@ -24,9 +26,57 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm test
-      - run: npm run build
+      - name: Verify lineup collector
+        continue-on-error: true
+        run: |
+          origin='https://saiqi1999.github.io'
+          headers=$(mktemp)
+          preflight_status=$(curl --proto '=https' --silent --show-error --max-time 12 \
+            --output /dev/null --dump-header "$headers" --write-out '%{http_code}' \
+            --request OPTIONS --header "Origin: $origin" \
+            --header 'Access-Control-Request-Method: POST' \
+            --header 'Access-Control-Request-Headers: content-type' "$VITE_PLAYTEST_RUNS_URL")
+          printf 'Lineup collector preflight HTTP %s\n' "$preflight_status"
+          test "$preflight_status" = 204
+          grep -Eiq '^access-control-allow-origin:[[:space:]]*https://saiqi1999\.github\.io[[:space:]]*      - uses: actions/upload-artifact@v4
+        with:
+          name: playable-site
+          path: web/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: published
+      - uses: actions/download-artifact@v4
+        with:
+          name: playable-site
+          path: built
+      - name: Publish static files
         env:
-          VITE_PLAYTEST_RUNS_URL: ${{ vars.ROLLBOUND_PLAYTEST_RUNS_URL }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          touch built/.nojekyll
+          rsync -a --checksum --delete --exclude='.git/' built/ published/
+          cmp built/index.html published/index.html
+          git -C published add --all
+          if ! git -C published diff --cached --quiet; then
+            git -C published -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Publish web build for ${GITHUB_SHA}"
+            git -C published push origin HEAD:gh-pages
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds"
+ "$headers"
+          validation_status=$(curl --proto '=https' --silent --show-error --max-time 12 \
+            --output /dev/null --write-out '%{http_code}' --header "Origin: $origin" \
+            --header 'Content-Type: application/json' --data '{}' "$VITE_PLAYTEST_RUNS_URL")
+          printf 'Lineup collector validation HTTP %s\n' "$validation_status"
+          test "$validation_status" = 400
+      - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: playable-site

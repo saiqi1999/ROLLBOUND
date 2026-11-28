@@ -45,7 +45,7 @@ npx wrangler@4 login
 npx wrangler@4 deploy
 ```
 
-在 GitHub 仓库的 Actions variables 中设置 `ROLLBOUND_PLAYTEST_RUNS_URL` 为已部署的 Worker 地址加 `/api/lineup-runs`，然后运行 **Build and deploy ROLLBOUND**。此变量只包含公开的上传地址。Worker 从 `https://saiqi1999.github.io` 接收 JSON，开启请求限流和数据格式校验。
+GitHub Pages 默认使用 `https://rollbound.cardinal-99.workers.dev/api/lineup-runs`。更换服务时，在 Actions variables 中把 `ROLLBOUND_PLAYTEST_RUNS_URL` 设为新的公开上传地址，然后运行 **Build and deploy ROLLBOUND**。Worker 从 `https://saiqi1999.github.io` 接收 JSON，开启请求限流和数据格式校验。
 
 分析时由受授权的环境设置 `CLOUDFLARE_ACCOUNT_ID`、`ROLLBOUND_KV_NAMESPACE_ID` 和仅有 **Workers KV Storage Read** 权限的 `CLOUDFLARE_API_TOKEN`。从仓库根目录导出，每行是一局，可展开 `battles` 按规则版本、轮次或战果分析。
 
