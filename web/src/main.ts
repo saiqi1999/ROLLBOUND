@@ -11,7 +11,7 @@ import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {applyMagicTag} from './shop/tags.ts';
 import {loadRun,saveRun} from './save.ts';
 import {flushLineupLogs,lineupLogging,queueLineup,startLineupLog} from './lineup-client.ts';
-import {loadMirrors,playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
+import {downloadPlaytestArchive,loadMirrors,playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
 import {recordPlaytestBattle} from './playtest-run.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
@@ -32,6 +32,25 @@ let timer=0,startedAt=0,remaining=0,paused=false,speed=1;
 let frames:PlaybackFrame[]=[],frameIndex=0,pending:BattleWindow|undefined,playbackStart:Battle|undefined;
 let replayIndex:number|undefined,resumeAfterDialog=false;
 const mirrorLoads=new WeakMap<Run,Promise<void>>();
+
+if(playtestEnabled){
+  const tools=document.querySelector<HTMLElement>('#playtest-tools')!;
+  const button=tools.querySelector<HTMLButtonElement>('#playtest-export')!;
+  const status=tools.querySelector('#playtest-export-status')!;
+  tools.hidden=false;
+  button.addEventListener('click',async()=>{
+    button.disabled=true;
+    status.textContent='正在导出…';
+    try{
+      await downloadPlaytestArchive();
+      status.textContent='已开始下载。';
+    }catch{
+      status.textContent='导出失败，请稍后重试。';
+    }finally{
+      button.disabled=false;
+    }
+  });
+}
 
 function flushPlaytestRun(){
   void uploadFinishedPlaytest(run,uploaded=>{if(run===uploaded)saveRun(uploaded);});

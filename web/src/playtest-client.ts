@@ -8,6 +8,26 @@ const endpoint=import.meta.env.VITE_PLAYTEST_RUNS_URL?.trim();
 export const playtestEnabled=Boolean(endpoint)&&!lineupLogging;
 const sending=new WeakSet<Run>();
 
+export async function downloadPlaytestArchive(){
+  if(!playtestEnabled||!endpoint)throw Error('Playtest export is unavailable.');
+  const url=new URL('playtest-export',new URL(endpoint,window.location.href));
+  const response=await fetch(url,{
+    credentials:'omit',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(30000),
+  });
+  if(!response.ok||!response.headers.get('content-type')?.startsWith('application/json')){
+    throw Error('Unable to download the playtest archive.');
+  }
+
+  const downloadUrl=URL.createObjectURL(await response.blob());
+  const link=document.createElement('a');
+  link.href=downloadUrl;
+  link.download='rollbound-playtest-all.json';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(()=>URL.revokeObjectURL(downloadUrl),1000);
+}
+
 export async function loadMirrors(){
   if(!playtestEnabled||!endpoint)return;
   try{

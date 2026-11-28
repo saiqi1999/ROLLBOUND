@@ -1,6 +1,6 @@
 import {readBody} from './lineups.ts';
 import {matchMirrors} from './match-mirrors.ts';
-import {isCompletedPlaytestRun,type PlaytestKV} from './playtest-archive.ts';
+import {isCompletedPlaytestRun,playtestArchiveKey,readArchive,type PlaytestKV} from './playtest-archive.ts';
 
 export {isCompletedPlaytestRun,PlaytestArchive} from './playtest-archive.ts';
 
@@ -15,7 +15,8 @@ const maxBytes=512*1024;
 
 export async function receivePlaytestRun(request:Request,env:Env):Promise<Response>{
   const url=new URL(request.url);
-  const reading=url.pathname==='/api/mirrors';
+  const exporting=url.pathname==='/api/playtest-export';
+  const reading=exporting||url.pathname==='/api/mirrors';
   if(!reading&&url.pathname!=='/api/lineup-runs')return new Response(null,{status:404});
   const origin=request.headers.get('origin');
   if(!origin||origin!==env.PLAYTEST_ORIGIN)return new Response(null,{status:403});
@@ -41,8 +42,16 @@ export async function receivePlaytestRun(request:Request,env:Env):Promise<Respon
 
   try{
     const ip=request.headers.get('cf-connecting-ip')??'unknown';
-    const {success}=await env.PLAYTEST_LIMITER.limit({key:reading?'mirrors:'+ip:ip});
+    const key=reading?url.pathname.slice('/api/'.length)+':'+ip:ip;
+    const {success}=await env.PLAYTEST_LIMITER.limit({key});
     if(!success)return new Response(null,{status:429,headers:{...headers,'retry-after':'60'}});
+    if(exporting){
+      const archive=await env.PLAYTEST_RUNS.get(playtestArchiveKey)??JSON.stringify(await readArchive(env.PLAYTEST_RUNS));
+      return new Response(archive,{headers:{
+        ...headers,'content-type':'application/json; charset=utf-8',
+        'content-disposition':'attachment; filename="rollbound-playtest-all.json"',
+      }});
+    }
     if(reading){
       const ruleset=Number(url.searchParams.get('ruleset'));
       if(!Number.isSafeInteger(ruleset)||ruleset<1)return new Response(null,{status:400,headers});

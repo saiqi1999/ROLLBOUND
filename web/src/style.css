@@ -133,6 +133,11 @@
 .loaded-spell .sprite { width: 34px; height: 34px; }
 #save-status { color: var(--gold); max-width: 1280px; margin: 0 auto 12px; padding: 0 16px; }
 #save-status:empty { display: none; }
+#playtest-tools { max-width: 1280px; margin: 0 auto; padding: 0 16px 20px; }
+#playtest-tools details { border-top: 1px solid var(--edge); }
+#playtest-tools summary { padding: 10px 0; color: var(--muted); cursor: pointer; font-size: .88rem; }
+#playtest-export-status { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+#playtest-export-status:empty { display: none; }
 [hidden] { display: none !important; }
 
 /* Arena only */

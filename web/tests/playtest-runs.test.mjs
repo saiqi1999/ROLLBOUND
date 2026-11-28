@@ -115,6 +115,26 @@ test('the Worker accepts the Pages origin and deduplicates retries in the full a
   assert.equal(writes(),1);
 });
 
+test('the Pages export downloads complete runs without including the approved mirror pack',async()=>{
+  const {env,rows,writes}=storage();
+  const run=finishedPlaytestRun(finishedRun());
+  const url='https://playtest.example/api/playtest-export';
+  const download=()=>receivePlaytestRun(new Request(url,{headers:{origin}}),env);
+  rows.set('run:'+run.runId,JSON.stringify(run));
+  rows.set(approvedMirrorsKey,JSON.stringify({schemaVersion:1,opponents:[{runId:run.runId,rounds:[4]}]}));
+  assert.deepEqual((await (await download()).json()).runs,{[run.runId]:run});
+
+  const archive={schemaVersion:1,revision:4,runs:{[run.runId]:run}};
+  rows.set(playtestArchiveKey,JSON.stringify(archive));
+  const response=await download();
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get('access-control-allow-origin'),origin);
+  assert.equal(response.headers.get('content-disposition'),'attachment; filename="rollbound-playtest-all.json"');
+  assert.deepEqual(await response.json(),archive);
+  assert.equal((await receivePlaytestRun(new Request(url,{headers:{origin:'https://elsewhere.test'}}),env)).status,403);
+  assert.equal(writes(),0);
+});
+
 test('concurrent uploads keep legacy and new runs together and a cold writer rejects a stale revision',async()=>{
   const {env,rows,restart}=storage();
   const legacy=finishedPlaytestRun(finishedRun());

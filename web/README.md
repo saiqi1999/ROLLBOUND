@@ -47,6 +47,8 @@ npx wrangler@4 deploy
 
 GitHub Pages 默认使用 `https://rollbound.cardinal-99.workers.dev/api/lineup-runs`。更换服务时，在 Actions variables 中把 `ROLLBOUND_PLAYTEST_RUNS_URL` 设为新的公开上传地址，然后运行 **Build and deploy ROLLBOUND**。Worker 从 `https://saiqi1999.github.io` 接收 JSON，开启请求限流和数据格式校验。
 
+在 GitHub Pages 页面底部展开「试玩记录」，点击「导出 JSON」可下载共享的匿名对局档案。文件的 `runs` 按 `runId` 保存完整的各轮记录，可用于模拟和筛选影子对手。
+
 分析时由受授权的环境设置 `CLOUDFLARE_ACCOUNT_ID`、`ROLLBOUND_KV_NAMESPACE_ID` 和仅有 **Workers KV Storage Read** 权限的 `CLOUDFLARE_API_TOKEN`。从仓库根目录导出，每行是一局，可展开 `battles` 按规则版本、轮次或战果分析。
 
 ```sh
