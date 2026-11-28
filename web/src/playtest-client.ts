@@ -28,6 +28,19 @@ export async function downloadPlaytestArchive(){
   window.setTimeout(()=>URL.revokeObjectURL(downloadUrl),1000);
 }
 
+export async function approvePlaytestBatch(){
+  if(!playtestEnabled||!endpoint)throw Error('Playtest approval is unavailable.');
+  const url=new URL('approve-playtests',new URL(endpoint,window.location.href));
+  const response=await fetch(url,{
+    method:'POST',credentials:'omit',redirect:'error',signal:AbortSignal.timeout(30000),
+  });
+  if(!response.ok)throw Error('Unable to publish the approved playtests.');
+  const result=await response.json() as {runs:number;lineups:number};
+  if(!Number.isSafeInteger(result.runs)||result.runs<1||
+    !Number.isSafeInteger(result.lineups)||result.lineups<result.runs)throw Error('Invalid approval result.');
+  return result;
+}
+
 export async function loadMirrors(){
   if(!playtestEnabled||!endpoint)return;
   try{

@@ -5,7 +5,7 @@ import {advance,currentAttack,maxHealth,newRun,startBattle} from '../src/engine.
 import {BATTLE_RULESET} from '../src/lineup-log.ts';
 import {finishedPlaytestRun,recordPlaytestBattle} from '../src/playtest-run.ts';
 import {PlaytestArchive,receivePlaytestRun} from '../src/server/playtest-worker.ts';
-import {legacyRunKey,playtestArchiveKey,playtestRunPrefix,runKey} from '../src/server/playtest-archive.ts';
+import {digestOf,legacyRunKey,playtestArchiveKey,playtestRunPrefix,runKey} from '../src/server/playtest-archive.ts';
 import {approvedMirrorsKey,mirrorManifestKey,mirrorRefreshKey} from '../src/server/match-mirrors.ts';
 import {recruit} from '../src/shop/rules.ts';
 
@@ -212,7 +212,7 @@ test('manual approvals serve only the selected rounds and restore mirrored stats
   rows.set(mirrorRefreshKey,String(timestamp+100));
   const mirrors=await (await receivePlaytestRun(mirrorRequest(),env)).json();
   assert.deepEqual(mirrors.rounds,{4:{starters:[veteran],reserves:[reserve]},7:{starters:[veteran],reserves:[reserve]}});
-  assert.deepEqual(JSON.parse(rows.get(mirrorManifestKey)).counts,{[BATTLE_RULESET]:{4:1,7:1}});
+  assert.deepEqual(JSON.parse(rows.get(mirrorManifestKey)).counts,{[BATTLE_RULESET]:{4:1,5:1,7:1}});
   assert.deepEqual(JSON.parse(rows.get(runKey(report))),JSON.parse(JSON.stringify(report)));
   assert.deepEqual((await (await receivePlaytestRun(mirrorRequest(BATTLE_RULESET-1),env)).json()).rounds,{});
   assert.equal((await receivePlaytestRun(request(report),env)).status,204);
@@ -275,6 +275,54 @@ test('refresh numbers each round from one and a failed rebuild keeps the previou
   const second=JSON.parse(rows.get(mirrorManifestKey));
   assert.notEqual(first.generation,second.generation);
   assert.deepEqual(second.counts,{4:{4:1}});
+});
+
+test('the Pages button applies the configured batch once, preserving existing approvals',async()=>{
+  const {env,rows,restart,writes}=storage();
+  const base=finishedPlaytestRun(finishedRun());
+  const complete={...base,battles:[4,5,6,7].map(round=>({
+    ...base.battles[0],round,battleId:String(round).padStart(32,'0'),result:'win',
+  }))};
+  const selected=[['b',[4]],['c',[5,6]],['d',[7]]].map(([id,rounds],index)=>({
+    run:withRunId({...complete,finishedAt:complete.finishedAt+index},id.repeat(32)),rounds,
+  }));
+  const previous=withRunId(complete,'e'.repeat(32));
+  const prior={runId:previous.runId,ruleset:BATTLE_RULESET,rounds:[4]};
+  rows.set(runKey(previous),JSON.stringify(previous));
+  rows.set(approvedMirrorsKey,JSON.stringify({schemaVersion:1,opponents:[prior]}));
+  env.PLAYTEST_APPROVAL_BATCH={entries:await Promise.all(selected.map(async({run,rounds})=>({
+    finishedAt:run.finishedAt,keyDigest:await digestOf(runKey(run)),ruleset:BATTLE_RULESET,rounds,
+  })))};
+  const approve=(body,source=origin)=>receivePlaytestRun(new Request('https://playtest.example/api/approve-playtests',{
+    method:'POST',body,duplex:'half',headers:{origin:source},
+  }),env);
+  assert.equal((await approve('arbitrary lineup')).status,400);
+  assert.equal((await approve(null,'https://elsewhere.test')).status,403);
+  assert.equal((await approve()).status,503);
+  assert.equal(writes(),0);
+  for(const {run} of selected)rows.set(runKey(run),JSON.stringify(run));
+  const emptyBody=new ReadableStream({start(controller){controller.close();}});
+  const responses=await Promise.all([approve(),approve(emptyBody)]);
+  assert.deepEqual(responses.map(response=>response.status),[200,200]);
+  const [result,repeated]=await Promise.all(responses.map(response=>response.json()));
+  assert.deepEqual(repeated,result);
+  assert.equal(result.runs,3);
+  assert.equal(result.lineups,4);
+  assert.deepEqual(result.manifest.counts,{[BATTLE_RULESET]:{4:2,5:1,6:1,7:1}});
+  assert.deepEqual(JSON.parse(rows.get(approvedMirrorsKey)).opponents,[prior,...selected.map(({run,rounds})=>({
+    runId:run.runId,ruleset:BATTLE_RULESET,rounds,
+  }))]);
+  for(const {run,rounds} of selected){
+    for(const round of rounds){
+      const slots=[...rows].filter(([key])=>key.startsWith(`approvedkey_version1:${BATTLE_RULESET}:${round}:${result.manifest.generation}:`));
+      assert.ok(slots.some(([,value])=>JSON.parse(value).runId===run.runId));
+    }
+  }
+  restart();
+  assert.deepEqual(await (await approve()).json(),result);
+  assert.equal(writes(),7);
+  const live=await (await receivePlaytestRun(mirrorRequest(),env)).json();
+  assert.deepEqual(Object.keys(live.rounds),['4','7']);
 });
 
 test('the Worker rejects foreign origins, read requests, and payloads with unrelated fields',async()=>{

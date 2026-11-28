@@ -61,6 +61,8 @@ node web/scripts/export-playtest-runs.mjs > rollbound-playtest-runs.ndjson
 
 第 4、7 战按战斗规则版本和轮次各自匹配。网页开局下载镜像阵容并随本局存档保存，后续开战直接使用已下载的首发、候补、攻血、护甲和标签。某轮没有可用镜像时，使用对应的原关卡阵容。
 
+GitHub Pages 底部的「写入认可名单」会导入 `PLAYTEST_APPROVAL_BATCH` 指定的对局。Worker 按归档 key 的 SHA-256 和结算时间找到完整记录，校验指定轮次后，把认可结果合并到 KV 的 `mirror:approved` 并重建连续编号。每批导入一次，重试会返回同一批的结果。第 4–7 战的认可阵容均可写入池中，游戏开局从第 4、7 战取样。
+
 在 `rollbound-playtest-runs` 的 KV Pairs 手动创建或编辑 `mirror:approved`。`runId` 填全量包里选定的局 ID，`ruleset` 和 `rounds` 取自该局允许匹配的战斗。以下格式示例里的 `runId` 需要替换为已选记录。
 
 ```json

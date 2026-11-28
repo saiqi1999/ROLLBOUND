@@ -5,7 +5,14 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "PLAYTEST_ORIGIN": "https://saiqi1999.github.io"
+    "PLAYTEST_ORIGIN": "https://saiqi1999.github.io",
+    "PLAYTEST_APPROVAL_BATCH": {
+      "entries": [
+        { "finishedAt": 1795840634883, "keyDigest": "a3eec47c331c11265e2ea1aff4c5ab6b2c41c32e49b80417d26340d32d858620", "ruleset": 4, "rounds": [4] },
+        { "finishedAt": 1795852734335, "keyDigest": "64f8bd47ff1392ce9c44c806fcb4d6b7b6b05a45054e839edaedcfe4cdb80d80", "ruleset": 4, "rounds": [5, 6] },
+        { "finishedAt": 1795843868802, "keyDigest": "4b11a579c245cfa710cda22aaac4f9a4d3565e7d402c4d820eef917eab870212", "ruleset": 4, "rounds": [7] }
+      ]
+    }
   },
   "kv_namespaces": [
     {

@@ -1,4 +1,5 @@
 import {isMirrorLineup,isMirrorRound,mirrorRounds,type MirrorBundle} from '../mirror-lineups.ts';
+import type {Lineup} from '../lineup-log.ts';
 import type {PlaytestRun} from '../playtest-run.ts';
 import {
   isCompletedPlaytestRun,legacyRunKey,listRunPages,playtestRunPrefix,readLegacyArchive,
@@ -9,9 +10,11 @@ export const approvedMirrorsKey='mirror:approved';
 const approvedPrefix='approvedkey_version1:';
 export const mirrorRefreshKey=approvedPrefix+'refresh';
 export const mirrorManifestKey=approvedPrefix+'manifest';
-type Approval={runId:string;ruleset:number;rounds:number[]};
-type ApprovedMirrors={schemaVersion:1;opponents:Approval[]};
-type RoundCounts=Partial<Record<(typeof mirrorRounds)[number],number>>;
+export type Approval={runId:string;ruleset:number;rounds:number[]};
+export type ApprovedMirrors={schemaVersion:1;opponents:Approval[]};
+const approvedRounds=[4,5,6,7] as const;
+export type ApprovedRound=(typeof approvedRounds)[number];
+type RoundCounts=Partial<Record<ApprovedRound,number>>;
 export type MirrorManifest={schemaVersion:1;generation:string;requestedAt:number;counts:Record<number,RoundCounts>};
 type Slot={key:string;value:string};
 
@@ -19,14 +22,22 @@ function mirrorSlotKey(ruleset:number,round:number,generation:string,index:numbe
   return approvedPrefix+[ruleset,round,generation,index].join(':');
 }
 
-async function readApprovals(kv:PlaytestKV){
+function isApprovedRound(round:number):round is ApprovedRound{
+  return approvedRounds.some(candidate=>candidate===round);
+}
+
+export async function readApprovedMirrors(kv:PlaytestKV):Promise<ApprovedMirrors>{
   const serialized=await kv.get(approvedMirrorsKey);
-  if(serialized===null)return [];
+  if(serialized===null)return {schemaVersion:1,opponents:[]};
   const pool=JSON.parse(serialized) as ApprovedMirrors|null;
   if(pool?.schemaVersion!==1||!Array.isArray(pool.opponents))throw Error('Invalid approved mirror pack.');
+  return pool;
+}
+
+function validApprovals(pool:ApprovedMirrors){
   return pool.opponents.filter(item=>Number.isSafeInteger(item?.ruleset)&&item.ruleset>0&&
     typeof item.runId==='string'&&runIdPattern.test(item.runId)&&
-    Array.isArray(item.rounds)&&item.rounds.some(isMirrorRound));
+    Array.isArray(item.rounds)&&item.rounds.some(isApprovedRound));
 }
 
 async function readApprovedRuns(kv:PlaytestKV,approvals:Approval[]){
@@ -72,18 +83,18 @@ async function readApprovedRuns(kv:PlaytestKV,approvals:Approval[]){
   return runs;
 }
 
-function approvedLineups(run:PlaytestRun,approval:Approval){
-  const rounds:MirrorBundle['rounds']={};
+export function approvedLineups(run:PlaytestRun,approval:Approval){
+  const rounds:Partial<Record<ApprovedRound,Lineup>>={};
   for(const {round,ruleset,lineup} of run.battles){
-    if(ruleset!==approval.ruleset||!isMirrorRound(round)||!approval.rounds.includes(round))continue;
+    if(ruleset!==approval.ruleset||!isApprovedRound(round)||!approval.rounds.includes(round))continue;
     const mirror={starters:lineup.starters.filter(unit=>!unit.cloneOf),reserves:lineup.reserves};
     if(isMirrorLineup(mirror))rounds[round]=mirror;
   }
   return rounds;
 }
 
-export async function refreshMirrorPool(kv:PlaytestKV,requestedAt:number){
-  const approvals=await readApprovals(kv);
+export async function refreshMirrorPool(kv:PlaytestKV,requestedAt:number,pool?:ApprovedMirrors){
+  const approvals=validApprovals(pool??await readApprovedMirrors(kv));
   const runs=await readApprovedRuns(kv,approvals);
   const manifest:MirrorManifest={schemaVersion:1,generation:requestedAt+'-'+crypto.randomUUID(),requestedAt,counts:{}};
   const slots:Slot[]=[];
@@ -94,7 +105,7 @@ export async function refreshMirrorPool(kv:PlaytestKV,requestedAt:number){
     const run=runs.get(approval.runId);
     if(!run)throw Error('An approved run is unavailable.');
     const lineups=approvedLineups(run,approval);
-    for(const round of mirrorRounds){
+    for(const round of approvedRounds){
       const lineup=lineups[round];
       const identity=[approval.ruleset,round,run.runId].join(':');
       if(!lineup||included.has(identity))continue;
@@ -144,14 +155,15 @@ export async function matchMirrors(kv:PlaytestKV,ruleset:number,refresh?:(reques
   if(manifest?.schemaVersion===1)return matchDensePool(kv,ruleset,manifest);
 
   const rounds:MirrorBundle['rounds']={};
-  const approvals=(await readApprovals(kv)).filter(item=>item.ruleset===ruleset);
+  const approvals=validApprovals(await readApprovedMirrors(kv))
+    .filter(item=>item.ruleset===ruleset&&item.rounds.some(isMirrorRound));
   if(!approvals.length)return {ruleset,rounds};
 
   const runs=await readApprovedRuns(kv,approvals);
   const choices:MirrorBundle['rounds'][]=[];
   for(const approval of approvals){
     const run=runs.get(approval.runId);
-    if(run)choices.push(approvedLineups(run,approval));
+    if(run)choices.push(approvedLineups(run,{...approval,rounds:approval.rounds.filter(isMirrorRound)}));
   }
   const pick=<T>(options:T[])=>options[Math.floor(Math.random()*options.length)] as T|undefined;
   const paired=pick(choices.filter(choice=>mirrorRounds.every(round=>choice[round])));

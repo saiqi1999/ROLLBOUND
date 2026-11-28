@@ -1,29 +1,28 @@
 import type {PlaytestRun} from '../playtest-run.ts';
+import {mergeApprovedPlaytests,resolveApprovalBatch,type ApprovalBatch} from './approved-playtests.ts';
 import {
-  isCompletedPlaytestRun,legacyRunKey,legacyRunPrefix,listRunPages,playtestArchiveKey,readLegacyArchive,
+  digestOf,isCompletedPlaytestRun,legacyRunKey,legacyRunPrefix,listRunPages,playtestArchiveKey,readLegacyArchive,
   readRunValue,runKey,type PlaytestKV,
 } from './playtest-archive.ts';
-import {refreshMirrorPool,type MirrorManifest} from './match-mirrors.ts';
+import {approvedMirrorsKey,mirrorRefreshKey,readApprovedMirrors,refreshMirrorPool,type MirrorManifest} from './match-mirrors.ts';
 
 type ArchiveState={storage:{get<T>(key:string):Promise<T|undefined>;put(key:string,value:unknown):Promise<void>}};
 type LegacyArchiveProgress={revision:number;offset:number};
 type Receipt=string|{digest:string};
+type ApprovalReceipt={runs:number;lineups:number;manifest:MirrorManifest};
 const migrationCompleteKey='timestamped-migration-complete';
 const batchSize=16;
-
-async function digestOf(body:string){
-  const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(body)));
-  return Array.from(hash,byte=>byte.toString(16).padStart(2,'0')).join('');
-}
 
 export class PlaytestArchive{
   private state:ArchiveState;
   private kv:PlaytestKV;
+  private approvalBatch?:ApprovalBatch;
   private pending=Promise.resolve();
 
-  constructor(state:ArchiveState,env:{PLAYTEST_RUNS:PlaytestKV}){
+  constructor(state:ArchiveState,env:{PLAYTEST_RUNS:PlaytestKV;PLAYTEST_APPROVAL_BATCH?:ApprovalBatch}){
     this.state=state;
     this.kv=env.PLAYTEST_RUNS;
+    this.approvalBatch=env.PLAYTEST_APPROVAL_BATCH;
   }
 
   async fetch(request:Request){
@@ -44,6 +43,11 @@ export class PlaytestArchive{
         return new Response(null,{status:await this.append(run)});
       }
       case '/migrate':return new Response(null,{status:await this.migrate()});
+      case '/approve-playtests':{
+        const batch=this.approvalBatch;
+        if(!batch?.entries.length)return new Response(null,{status:404});
+        return Response.json(await this.approvePlaytests(batch));
+      }
       case '/refresh':{
         const requestedAt=Number(await request.text());
         if(!Number.isSafeInteger(requestedAt)||requestedAt<1)return new Response(null,{status:400});
@@ -55,6 +59,27 @@ export class PlaytestArchive{
       }
       default:return new Response(null,{status:404});
     }
+  }
+
+  private async approvePlaytests(batch:ApprovalBatch){
+    const key='approved-batch:'+await digestOf(JSON.stringify(batch));
+    const receipt=await this.state.storage.get<ApprovalReceipt>(key);
+    if(receipt)return receipt;
+
+    const [approvals,pool,previous,refreshValue]=await Promise.all([
+      resolveApprovalBatch(this.kv,batch),readApprovedMirrors(this.kv),
+      this.state.storage.get<MirrorManifest>('mirror-manifest'),this.kv.get(mirrorRefreshKey),
+    ]);
+    if(mergeApprovedPlaytests(pool,approvals))await this.kv.put(approvedMirrorsKey,JSON.stringify(pool));
+    const refresh=Number(refreshValue);
+    const requestedAt=Math.max(Date.now(),(previous?.requestedAt??0)+1,
+      Number.isSafeInteger(refresh)&&refresh>0?refresh:0);
+    const manifest=await refreshMirrorPool(this.kv,requestedAt,pool);
+    await this.state.storage.put('mirror-manifest',manifest);
+    const result={runs:new Set(approvals.map(approval=>approval.runId)).size,
+      lineups:approvals.reduce((count,approval)=>count+approval.rounds.length,0),manifest};
+    await this.state.storage.put(key,result);
+    return result;
   }
 
   private async append(run:PlaytestRun){

@@ -25,8 +25,17 @@ export function legacyRunKey(runId:string){
   return legacyRunPrefix+runId;
 }
 
+export function runKeyPrefix(finishedAt:number){
+  return playtestRunPrefix+String(finishedAt).padStart(16,'0')+':';
+}
+
 export function runKey(run:PlaytestRun){
-  return playtestRunPrefix+String(run.finishedAt).padStart(16,'0')+':'+run.runId;
+  return runKeyPrefix(run.finishedAt)+run.runId;
+}
+
+export async function digestOf(value:string){
+  const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)));
+  return Array.from(hash,byte=>byte.toString(16).padStart(2,'0')).join('');
 }
 
 export function runIdForKey(key:string){

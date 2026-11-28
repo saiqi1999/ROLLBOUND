@@ -17,8 +17,9 @@ const maxBytes=512*1024;
 export async function receivePlaytestRun(request:Request,env:Env):Promise<Response>{
   const url=new URL(request.url);
   const exporting=url.pathname==='/api/playtest-export';
+  const approving=url.pathname==='/api/approve-playtests';
   const reading=exporting||url.pathname==='/api/mirrors';
-  if(!reading&&url.pathname!=='/api/lineup-runs')return new Response(null,{status:404});
+  if(!reading&&!approving&&url.pathname!=='/api/lineup-runs')return new Response(null,{status:404});
   const origin=request.headers.get('origin');
   if(!origin||origin!==env.PLAYTEST_ORIGIN)return new Response(null,{status:403});
 
@@ -35,7 +36,7 @@ export async function receivePlaytestRun(request:Request,env:Env):Promise<Respon
     }});
   }
   if(request.method!==method)return new Response(null,{status:405,headers:{...headers,allow:method+', OPTIONS'}});
-  if(!reading&&request.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json'){
+  if(!reading&&!approving&&request.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json'){
     return new Response(null,{status:415,headers});
   }
   if(Number(request.headers.get('content-length'))>maxBytes)return new Response(null,{status:413,headers});
@@ -43,9 +44,15 @@ export async function receivePlaytestRun(request:Request,env:Env):Promise<Respon
 
   try{
     const ip=request.headers.get('cf-connecting-ip')??'unknown';
-    const key=reading?url.pathname.slice('/api/'.length)+':'+ip:ip;
+    const key=reading||approving?url.pathname.slice('/api/'.length)+':'+ip:ip;
     const {success}=await env.PLAYTEST_LIMITER.limit({key});
     if(!success)return new Response(null,{status:429,headers:{...headers,'retry-after':'60'}});
+    if(approving){
+      if(request.body&&await readBody(request,0)!=='')return new Response(null,{status:400,headers});
+      const result=await env.PLAYTEST_ARCHIVE.getByName('approved-mirrors')
+        .fetch(new Request('https://archive.internal/approve-playtests',{method:'POST'}));
+      return new Response(result.body,{status:result.status,headers:{...headers,'content-type':'application/json'}});
+    }
     if(exporting){
       const migration=await env.PLAYTEST_ARCHIVE?.getByName('playtest-runs')
         .fetch(new Request('https://archive.internal/migrate',{method:'POST'})).catch(()=>undefined);

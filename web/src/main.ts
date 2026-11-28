@@ -11,7 +11,7 @@ import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {applyMagicTag} from './shop/tags.ts';
 import {loadRun,saveRun} from './save.ts';
 import {flushLineupLogs,lineupLogging,queueLineup,startLineupLog} from './lineup-client.ts';
-import {downloadPlaytestArchive,loadMirrors,playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
+import {approvePlaytestBatch,downloadPlaytestArchive,loadMirrors,playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
 import {recordPlaytestBattle} from './playtest-run.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
@@ -48,6 +48,20 @@ if(playtestEnabled){
       status.textContent='导出失败，请稍后重试。';
     }finally{
       button.disabled=false;
+    }
+  });
+
+  const approve=tools.querySelector<HTMLButtonElement>('#playtest-approve')!;
+  const approvalStatus=tools.querySelector('#playtest-approve-status')!;
+  approve.addEventListener('click',async()=>{
+    approve.disabled=true;
+    approvalStatus.textContent='正在写入认可名单…';
+    try{
+      const {runs,lineups}=await approvePlaytestBatch();
+      approvalStatus.textContent=`已写入 ${runs} 局，共 ${lineups} 个认可阵容。`;
+    }catch{
+      approvalStatus.textContent='写入未确认，请稍后重试。';
+      approve.disabled=false;
     }
   });
 }

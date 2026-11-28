@@ -136,8 +136,8 @@
 #playtest-tools { max-width: 1280px; margin: 0 auto; padding: 0 16px 20px; }
 #playtest-tools details { border-top: 1px solid var(--edge); }
 #playtest-tools summary { padding: 10px 0; color: var(--muted); cursor: pointer; font-size: .88rem; }
-#playtest-export-status { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
-#playtest-export-status:empty { display: none; }
+.playtest-status { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+.playtest-status:empty { display: none; }
 [hidden] { display: none !important; }
 
 /* Arena only */
