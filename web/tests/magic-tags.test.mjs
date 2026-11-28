@@ -92,7 +92,10 @@ test('all growth tags resolve once at departure, preserving a tag through evolut
   const run=newRun(17);
   const orc=recruit(run,'orc');
   orc.tag='growth';
-  run.shop.board[5]=unitSlot(orc);
+  for(let index=0;index<15;index++)recruit(run,'guard');
+  assert.ok(resolveSpin(run));
+  assert.equal(orc.kind,'armoredOrc');
+  assert.deepEqual([orc.gainedAttack,orc.gainedHealth],[0,0]);
   assert.ok(startBattle(run));
   assert.equal(orc.kind,'armoredOrc');
   assert.equal(orc.tag,'growth');

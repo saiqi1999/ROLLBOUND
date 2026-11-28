@@ -2,7 +2,7 @@ import {units,type Kind,type Offer,type SpellKind} from '../data.ts';
 import type {AppliedTag} from '../magic-tags.ts';
 
 export type UnitInstance = {
-  id:string;kind:Kind;gainedAttack:number;gainedHealth:number;startingArmor:number;evolutionTriggers?:number;tag?:AppliedTag;
+  id:string;kind:Kind;gainedAttack:number;gainedHealth:number;startingArmor:number;tag?:AppliedTag;
 };
 export type SpellInstance = {id:string;kind:SpellKind};
 export type OpeningSpell = SpellInstance&{kind:'fireball'};

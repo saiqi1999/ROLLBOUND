@@ -145,7 +145,7 @@ function showUnit(button:HTMLButtonElement,kind:Kind){
   const unit=run.roster.find(piece=>piece.id===button.dataset.unitId);
   const stats=unit?unitStats(unit):{attack:Number(button.dataset.attack)||units[kind].atk,
     health:Number(button.dataset.health)||units[kind].hp};
-  const text=unitEffectText(kind,{spellCasts:run.spellCasts,evolutionTriggers:unit?.evolutionTriggers});
+  const text=unitEffectText(kind,{spellCasts:run.spellCasts});
   modal(units[kind].name,art(kind)+unitTags(kind)+'<p>攻击 '+stats.attack+'　生命 '+stats.health+'</p>'+
     (text?'<p>'+text+'</p>':'')+(unit?.startingArmor?'<p>初始护甲 '+unit.startingArmor+'</p>':'')+
     (unit?.tag?'<h3>'+magicTags[unit.tag].name+'标签</h3>'+tagDetails(unit.tag):''));

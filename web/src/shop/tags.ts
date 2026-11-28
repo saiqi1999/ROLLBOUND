@@ -2,7 +2,7 @@ import {SLIME_REMOVAL_GAIN} from '../data.ts';
 import type {Run} from '../engine.ts';
 import {GROWTH_TAG_GAIN,tagCount,type AppliedTag,type TagId} from '../magic-tags.ts';
 import {grantGrowth} from './model.ts';
-import {detachShopUnit,resolveEvolutions} from './rules.ts';
+import {detachShopUnit} from './rules.ts';
 
 type TagActionResult =
   | {ok:true;unitId:string;previous?:AppliedTag;removed:boolean}
@@ -30,7 +30,6 @@ export function applyMagicTag(run:Run,unitId:string,tag:TagId):TagActionResult{
   if(slot>=0)run.shop.board[slot]=null;
   if(unit.kind==='slime'){
     for(const ally of run.roster)grantGrowth(ally,{attack:SLIME_REMOVAL_GAIN,health:SLIME_REMOVAL_GAIN});
-    resolveEvolutions(run);
   }
   return {ok:true,unitId,previous,removed:true};
 }
@@ -39,5 +38,4 @@ export function applyShopEndTags(run:Run){
   for(const unit of run.roster){
     if(unit.tag==='growth')grantGrowth(unit,{attack:GROWTH_TAG_GAIN,health:GROWTH_TAG_GAIN});
   }
-  resolveEvolutions(run);
 }

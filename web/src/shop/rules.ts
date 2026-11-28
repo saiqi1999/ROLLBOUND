@@ -1,7 +1,7 @@
 import {
   ARMORED_SKELETON_SPAWNS,BONE_ATTACK_GAIN,DEMON_STAT_PERCENT,FEL_SQUIRE_GAIN,GREATSWORD_COPY_GAIN,HUMAN_ARMOR,NECROMANCER_GAIN,NECROMANCER_GOLD,
-  ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,WEREWOLF_RECRUIT_GAIN,
-  archerPartners,canEvolveOrc,eliteOrcEvolutionGain,hasRace,humanKinds,
+  ORC_RIDER_NEIGHBORS,RECRUIT_GAIN,REFRESH_COST,SWORDSMAN_GAIN,TEMPLAR_DEATH_GAIN,WARLOCK_EVOLUTION_GOLD,WEREWOLF_RECRUIT_GAIN,
+  archerPartners,hasRace,humanKinds,
   shopKinds,spellKinds,spellOffer,spells,tagOffer,unitOffer,units,wizardEntryGain,
   type Kind,type Offer,type SpellKind,
 } from '../data.ts';
@@ -119,7 +119,7 @@ const unique=(ids:string[])=>[...new Set(ids)];
 const deathEffectKinds=new Set<Kind>(['armoredSkeleton','axeman','templar','felSquire','felGuard']);
 const human=(unit:UnitInstance)=>hasRace(unit.kind,'human');
 const orc=(unit:UnitInstance)=>hasRace(unit.kind,'orc');
-const felEvolutions:Partial<Record<Kind,Kind>>={orc:'felSquire',armoredOrc:'felGuard'};
+const felEvolutions:Partial<Record<Kind,Kind>>={orc:'felSquire',armoredOrc:'felGuard',orcRider:'felKnight'};
 
 function onBoard(spin:Spin,positions:Iterable<number>=spin.board.keys()){
   const found:UnitInstance[]=[];
@@ -161,28 +161,27 @@ function recordEffect(spin:Spin,text:string,focus:string[],buffed:string[]=[]){
   });
 }
 
-function evolveOrc(run:Run,unit:UnitInstance,next:Kind,spin?:Spin){
+function evolveOrc(spin:Spin,unit:UnitInstance,next:Kind){
   const original=name(unit);
   unit.kind=next;
-  const board=spin?.board??run.shop.board;
-  const slot=board.findIndex(symbol=>symbol?.id===unit.id);
-  if(slot>=0){
-    if(spin)writeSpinSlot(spin,slot,unitSlot(unit));
-    else board[slot]=unitSlot(unit);
-  }
-  spin?.evolved.add(unit.id);
+  const slot=spin.board.findIndex(symbol=>symbol?.id===unit.id);
+  if(slot>=0)writeSpinSlot(spin,slot,unitSlot(unit));
+  spin.evolved.add(unit.id);
 
-  const orcs=run.roster.filter(orc);
-  let gain=0;
-  for(const elite of orcs.filter(ally=>ally.kind==='eliteOrc')){
-    const triggers=elite.evolutionTriggers??0;
-    gain+=eliteOrcEvolutionGain(triggers);
-    elite.evolutionTriggers=triggers+1;
+  const text=[original+'永久进化为'+name(unit)],focus=[unit.id],buffed=[unit.id];
+  for(const [index,symbol] of spin.board.entries()){
+    if(symbol?.type!=='unit'||symbol.kind!=='eliteOrc')continue;
+    const neighbors=onBoard(spin,neighborSlots(index));
+    if(!neighbors.length)continue;
+    focus.push(symbol.id);
+    for(const ally of neighbors){
+      const {attack,health}=unitStats(ally);
+      grantGrowth(ally,{attack,health});
+      buffed.push(ally.id);
+    }
+    text.push('精英兽人使 '+neighbors.length+' 名相邻棋子攻血翻倍');
   }
-  if(gain){
-    for(const ally of orcs)grantGrowth(ally,{attack:gain,health:gain});
-  }
-  return {text:original+'永久进化为'+name(unit),gain,buffed:gain?orcs.map(ally=>ally.id):[unit.id]};
+  return {text:text.join(' · '),focus:[...focus,...buffed],buffed};
 }
 
 function grantLinkGrowth(spin:Spin,unit:UnitInstance,ability:Kind,amount:UnitGrowth){
@@ -262,27 +261,32 @@ function resolvePriest(spin:Spin,source:UnitInstance,neighbors:UnitInstance[],pr
   if(effects.length)recordEffect(spin,prefix+name(source)+' · 触发死亡效果 · '+effects.join('、')+'。',[...focus,...buffed],buffed);
 }
 
-function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:string){
+function resolveUndeadDestruction(spin:Spin,source:UnitInstance,positions:number[],prefix:string){
   const {run,board}=spin;
-  // Pick this effect's targets before placing any death recruits.
-  const targets=neighborSlots(index).filter(position=>{
+  const necromancer=source.kind==='king';
+  const targets=positions.flatMap(position=>{
     const slot=board[position];
-    return slot?.type==='unit'&&slot.kind!=='king'&&hasRace(slot.kind,'undead');
+    const victim=slot?.type==='unit'?spin.units.get(slot.id):undefined;
+    if(!victim||!hasRace(victim.kind,'undead')||(necromancer&&victim.kind==='king'))return [];
+    // Death effects can raise other targets' stats or place recruits during the sweep.
+    const {attack,health}=necromancer?{attack:NECROMANCER_GAIN,health:NECROMANCER_GAIN}:unitStats(victim);
+    return [{position,id:victim.id,attack,health}];
   });
   if(!targets.length)return;
   const removed:string[]=[],names:string[]=[],rewards:string[]=[];
   const buffed=[source.id];
-  let archerTriggers=0;
-  for(const targetIndex of targets){
-    const slot=board[targetIndex]!;
-    const victim=detachShopUnit(run,slot.id);
+  let archerTriggers=0,attackGain=0,healthGain=0;
+  for(const {position,id,attack,health} of targets){
+    const victim=detachShopUnit(run,id);
     if(!victim)continue;
     spin.units.delete(victim.id);
-    writeSpinSlot(spin,targetIndex,null);
+    writeSpinSlot(spin,position,null);
     removed.push(victim.id);
     names.push(name(victim));
-    grantGrowth(source,{attack:NECROMANCER_GAIN,health:NECROMANCER_GAIN});
-    run.gold+=NECROMANCER_GOLD;
+    grantGrowth(source,{attack,health});
+    attackGain+=attack;
+    healthGain+=health;
+    if(necromancer)run.gold+=NECROMANCER_GOLD;
     if(victim.kind==='greatswordSkeleton'){
       const copy={...victim,id:nextUnitId(run)};
       grantGrowth(copy,{attack:GREATSWORD_COPY_GAIN,health:GREATSWORD_COPY_GAIN});
@@ -304,9 +308,9 @@ function resolveNecromancer(spin:Spin,source:UnitInstance,index:number,prefix:st
   }
   if(!removed.length)return;
   const survivingBuffs=buffed.filter(id=>spin.units.has(id));
-  const gain=removed.length*NECROMANCER_GAIN;
   const details=[
-    '消灭'+names.join('、'),'永久 +'+gain+'/+'+gain,'金币 +'+removed.length*NECROMANCER_GOLD,...rewards,
+    '消灭'+names.join('、'),'永久 +'+attackGain+'/+'+healthGain,
+    ...(necromancer?['金币 +'+removed.length*NECROMANCER_GOLD]:[]),...rewards,
     ...(archerTriggers?['骷髅弓箭手触发 '+archerTriggers+' 次，各次自身永久 +'+BONE_ATTACK_GAIN+' 攻击']:[]),
   ];
   recordEffect(spin,prefix+name(source)+' · '+details.join(' · ')+'。',[...survivingBuffs,...removed],survivingBuffs);
@@ -325,21 +329,21 @@ function resolveLink(spin:Spin,source:UnitInstance,index:number,prefix:string){
   };
   switch(source.kind){
     case 'king':
-      resolveNecromancer(spin,source,index,prefix);
+    case 'felKnight':
+      resolveUndeadDestruction(spin,source,positions,prefix);
       break;
     case 'warlock':{
-      const text:string[]=[],buffed:string[]=[];
-      let eliteGain=0;
+      const evolutions=[];
       for(const unit of neighbors){
         const next=felEvolutions[unit.kind];
-        if(!next)continue;
-        const evolution=evolveOrc(run,unit,next,spin);
-        text.push(evolution.text);
-        buffed.push(...evolution.buffed);
-        eliteGain+=evolution.gain;
+        if(next)evolutions.push(evolveOrc(spin,unit,next));
       }
-      if(eliteGain)text.push('所有友方兽人永久 +'+eliteGain+'/+'+eliteGain);
-      if(text.length)recordEffect(spin,prefix+name(source)+' · '+text.join(' · ')+'。',[source.id,...buffed],buffed);
+      if(!evolutions.length)break;
+      const gold=evolutions.length*WARLOCK_EVOLUTION_GOLD;
+      run.gold+=gold;
+      const text=evolutions.map(evolution=>evolution.text).join(' · ');
+      recordEffect(spin,prefix+name(source)+' · '+text+' · 金币 +'+gold+'。',
+        [source.id,...evolutions.flatMap(evolution=>evolution.focus)],evolutions.flatMap(evolution=>evolution.buffed));
       break;
     }
     case 'archer':{
@@ -349,7 +353,7 @@ function resolveLink(spin:Spin,source:UnitInstance,index:number,prefix:string){
       break;
     }
     case 'demon':{
-      const [strongest]=neighbors.map(unit=>({unit,...unitStats(unit)}))
+      const [strongest]=neighbors.filter(unit=>unit.kind!=='demon').map(unit=>({unit,...unitStats(unit)}))
         .sort((left,right)=>(right.attack+right.health)-(left.attack+left.health));
       if(!strongest)break;
       const attack=Math.ceil(strongest.attack*DEMON_STAT_PERCENT/100);
@@ -398,33 +402,20 @@ function resolvePendingLinks(spin:Spin){
   }
 }
 
-export function resolveEvolutions(run:Run,spin?:Spin){
-  const orcs=run.roster.filter(orc);
-  if(!orcs.length)return;
-  const onWheel=spin?onBoard(spin).filter(orc):[];
-  const wheelIds=new Set(onWheel.map(unit=>unit.id));
-  const order=[...onWheel,...orcs.filter(unit=>!wheelIds.has(unit.id))];
-  const board=spin?.board??run.shop.board;
-  let buffedTeam:boolean;
-  do{
-    buffedTeam=false;
-    for(const unit of order){
-      if(spin?.evolved.has(unit.id))continue;
-      if(unit.kind!=='orc'&&unit.kind!=='armoredOrc')continue;
-      const slot=board.findIndex(symbol=>symbol?.id===unit.id);
-      const nearby=spin&&slot>=0&&unit.kind==='armoredOrc'?onBoard(spin,neighborSlots(slot)).filter(orc):[];
-      const next=canEvolveOrc(unit.kind,unitStats(unit).attack)?'armoredOrc':
-        nearby.length>=ORC_RIDER_NEIGHBORS?'orcRider':undefined;
-      if(!next)continue;
-      const {text,gain,buffed}=evolveOrc(run,unit,next,spin);
-      if(gain)buffedTeam=true;
-      if(spin){
-        const description=text+'。'+(gain?'所有友方兽人永久 +'+gain+'/+'+gain+'。':'');
-        recordEffect(spin,description,[...buffed,...nearby.map(other=>other.id)],buffed);
-      }
-    }
-    // An elite can make an earlier Orc reach its threshold during this pass.
-  }while(buffedTeam);
+function resolveEvolutions(spin:Spin){
+  for(const [index,slot] of spin.board.entries()){
+    if(slot?.type!=='unit'||(slot.kind!=='orc'&&slot.kind!=='armoredOrc')||spin.evolved.has(slot.id))continue;
+    const unit=spin.units.get(slot.id);
+    if(!unit)continue;
+    const positions=neighborSlots(index);
+    const nearby=onBoard(spin,positions);
+    const supporters=slot.kind==='orc'?nearby:nearby.filter(orc);
+    if(slot.kind==='orc'){
+      if(positions.some(position=>spin.board[position]===null))continue;
+    }else if(supporters.length<ORC_RIDER_NEIGHBORS)continue;
+    const {text,focus,buffed}=evolveOrc(spin,unit,slot.kind==='orc'?'armoredOrc':'orcRider');
+    recordEffect(spin,text+'。',[...focus,...supporters.map(other=>other.id)],buffed);
+  }
 }
 
 export function resolveSpin(run:Run){
@@ -448,7 +439,7 @@ export function resolveSpin(run:Run){
   }
   do{
     resolvePendingLinks(spin);
-    resolveEvolutions(run,spin);
+    resolveEvolutions(spin);
   }while(spin.pending.size);
   const settled=wheelFrame(board,run.roster);
   const result={

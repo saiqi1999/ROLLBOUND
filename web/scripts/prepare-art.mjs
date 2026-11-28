@@ -12,9 +12,9 @@ const names={
   soldier:'Soldier',swordsman:'Swordsman',axeman:'Armored Axeman',lancer:'Lancer',templar:'Knight Templar',wizard:'Wizard',
   armoredOrc:'Armored Orc',slime:'Slime',orcRider:'Orc rider',armoredSkeleton:'Armored Skeleton',bat:'Bat',
   greatswordSkeleton:'Greatsword Skeleton',eliteOrc:'Elite Orc',werebear:'Werebear',werewolf:'Werewolf',
-  warlock:'Warlock',felSquire:'Black Knight_A',felGuard:'Black Knight_B',demon:'Demon_A',
+  warlock:'Warlock',felSquire:'Black Knight_A',felGuard:'Black Knight_B',felKnight:'Black Knight_C',demon:'Demon_A',
 };
-const felUnits=new Set(['warlock','felSquire','felGuard']);
+const felUnits=new Set(['warlock','felSquire','felGuard','felKnight']);
 const warlockRobe=new Map([
   [0x321717,0x2f193c],[0x52122f,0x492060],[0x6e1d33,0x662984],
   [0x8e2b34,0x80389b],[0x972f34,0x8f47b2],[0xa6483a,0xa35bbf],
@@ -62,7 +62,7 @@ for(const [id,name] of Object.entries(names)){
     manifest[id][move]=count;
     if(move==='idle'){
       const height=id==='lancer'||id==='felSquire'?44:36;
-      const left=id==='greatswordSkeleton'?24:30;
+      const left=id==='felKnight'?35:id==='greatswordSkeleton'?24:30;
       const badge=new PNG({width:40,height});
       PNG.bitblt(src,badge,left,62-height,40,height,0,0);
       await writeFile(path.join(dest,id+'.png'),PNG.sync.write(badge));

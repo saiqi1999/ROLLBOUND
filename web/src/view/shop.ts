@@ -19,7 +19,7 @@ function alliedRoster(run:Run){
   const groups=new Map<string,{unit:UnitInstance;count:number}>();
   for(const unit of run.roster){
     const {attack,health}=unitStats(unit);
-    const key=[unit.kind,attack,health,unit.startingArmor,unit.evolutionTriggers??0,unit.tag].join(':');
+    const key=[unit.kind,attack,health,unit.startingArmor,unit.tag].join(':');
     const group=groups.get(key);
     if(group)group.count++;
     else groups.set(key,{unit,count:1});

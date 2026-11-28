@@ -83,6 +83,15 @@ test('a demon creates half the stats of the strongest adjacent unit',()=>{
   assert.equal(run.battle.units.find(unit=>unit.id===demon.id).hp,23);
 });
 
+test('adjacent demons cannot use each other as a source of stats',()=>{
+  const {roster:[first,second,guard],roll}=sampleSpin(['demon','demon','guard'],[],
+    (near,[first,second,guard])=>near(first,second)&&near(first,guard)&&!near(second,guard),
+    ([,second])=>Object.assign(second,{gainedAttack:90,gainedHealth:90}));
+  assert.deepEqual(unitStats(first),{attack:4,health:13});
+  assert.deepEqual(unitStats(second),{attack:93,health:97});
+  assert.deepEqual(roll.events.map(event=>event.focus),[[first.id,guard.id]]);
+});
+
 test('a wheel change can recheck a demon without granting stats twice in the same spin',()=>{
   const {roster:[demon,guard,king,page],roll}=sampleSpin(['demon','guard','king','page'],[],
     (near,[source,ally,necromancer,skeleton],_,result)=>
@@ -376,20 +385,26 @@ test('a surviving skeleton archer buffs itself once per allied undead destructio
   assert.deepEqual([king.gainedAttack,observer.gainedAttack,ally.gainedAttack,human.gainedAttack],[6,8,0,0]);
 });
 
-test('warlock evolves both adjacent orc tiers, preserving tags and triggering elite growth',()=>{
-  const {run,roster:[warlock,orc,armor,elite],roll}=sampleSpin(
-    ['warlock','orc','armoredOrc','eliteOrc'],[],(near,[source,light,heavy])=>near(source,light)&&near(source,heavy),
-    ([,light])=>Object.assign(light,{gainedAttack:1,gainedHealth:4,startingArmor:2,tag:'shield'}),
+test('warlock evolves all three adjacent orc tiers and earns three gold per transformation',()=>{
+  const {run,roster:[warlock,orc,armor,rider],roll}=sampleSpin(
+    ['warlock','orc','armoredOrc','orcRider'],[],(near,[source,light,heavy,rider])=>
+      near(source,light)&&near(source,heavy)&&near(source,rider)&&!near(rider,light)&&!near(rider,heavy),
+    ([,light,,rider])=>{
+      Object.assign(light,{gainedAttack:1,gainedHealth:4,startingArmor:2,tag:'shield'});
+      Object.assign(rider,{gainedAttack:5,gainedHealth:8,startingArmor:3,tag:'clone'});
+    },
   );
-  assert.deepEqual(run.roster.map(unit=>unit.kind),['warlock','felSquire','felGuard','eliteOrc']);
-  for(const unit of [orc,armor])assert.ok(hasRace(unit.kind,'orc')&&hasRace(unit.kind,'undead'));
-  assert.deepEqual([orc.gainedAttack,orc.gainedHealth,orc.startingArmor,orc.tag],[4,7,2,'shield']);
-  assert.equal(elite.evolutionTriggers,2);
-  assert.deepEqual([warlock.gainedAttack,armor.gainedAttack,elite.gainedAttack],[3,3,3]);
+  assert.deepEqual(run.roster.map(unit=>unit.kind),['warlock','felSquire','felGuard','felKnight']);
+  for(const unit of [orc,armor,rider])assert.ok(hasRace(unit.kind,'orc')&&hasRace(unit.kind,'undead'));
+  assert.deepEqual([orc.gainedAttack,orc.gainedHealth,orc.startingArmor,orc.tag],[1,4,2,'shield']);
+  assert.deepEqual([unitStats(rider),rider.startingArmor],[{attack:14,health:32,tag:'clone'},3]);
+  assert.equal(run.gold,28);
   assert.equal(roll.events.length,1);
+  assert.match(roll.events[0].text,/金币 \+9/);
   assert.ok(roll.events[0].focus.includes(warlock.id));
   assert.equal(roll.settled.find(slot=>slot?.id===orc.id).kind,'felSquire');
   assert.equal(roll.settled.find(slot=>slot?.id===armor.id).kind,'felGuard');
+  assert.equal(roll.settled.find(slot=>slot?.id===rider.id).kind,'felKnight');
 });
 
 test('the necromancer can chain into transformed fel undead, gets two gold for each, and spares other necromancers',()=>{
@@ -401,11 +416,32 @@ test('the necromancer can chain into transformed fel undead, gets two gold for e
   assert.equal(orc.kind,'felSquire');
   assert.equal(armor.kind,'felGuard');
   assert.deepEqual(run.roster,[warlock,king,other,human]);
-  assert.equal(run.gold,23);
+  assert.equal(run.gold,29);
   assert.equal(tagCount(run.tagInventory),1);
   assert.deepEqual([king.gainedAttack,king.gainedHealth],[9,9]);
   assert.deepEqual([other.gainedAttack,human.gainedAttack],[3,3]);
   assert.match(roll.events.map(event=>event.text).join('\n'),/消灭邪能.*金币 \+4/);
+});
+
+test('a fel knight consumes adjacent undead and gains their attack and health at activation',()=>{
+  const {run,roster:[knight,king,archer,guard],roll}=sampleSpin(['felKnight','king','bone','guard'],[],
+    (near,[knight,king,archer,guard],_,result)=>{
+      const position=unit=>result.drawn.findIndex(slot=>slot?.id===unit.id);
+      return near(knight,king)&&near(knight,archer)&&near(knight,guard)&&
+        position(knight)<position(king)&&position(king)<position(archer);
+    },
+    ([,king,archer])=>{
+      Object.assign(king,{gainedAttack:5,gainedHealth:7,startingArmor:11});
+      Object.assign(archer,{gainedAttack:4,gainedHealth:5});
+    });
+  assert.deepEqual(run.roster,[knight,guard]);
+  assert.deepEqual(unitStats(knight),{attack:23,health:55});
+  assert.equal(knight.startingArmor,0);
+  assert.equal(archer.gainedAttack,8);
+  assert.equal(run.gold,19);
+  assert.ok(roll.settled.every(slot=>slot?.id!==king.id&&slot?.id!==archer.id));
+  assert.equal(roll.events.length,1);
+  assert.match(roll.events[0].text,/邪能骑士 · 消灭.*永久 \+14\/\+31/);
 });
 
 test('a shared target is destroyed by the first necromancer in display order exactly once',()=>{
@@ -417,18 +453,28 @@ test('a shared target is destroyed by the first necromancer in display order exa
   assert.equal(roll.events.length,1);
 });
 
-test('an Orc with exactly five attack evolves when a spell raises its attack',()=>{
+test('an Orc with an empty adjacent cell stays an Orc after reaching five attack',()=>{
   const {roster,roll}=sampleSpin(['orc'],['surge'],(near,[orc],[surge])=>near(orc,surge));
-  assert.equal(roster[0].kind,'armoredOrc');
+  assert.equal(roster[0].kind,'orc');
   assert.equal(roster[0].gainedAttack,2);
-  assert.equal(roll.settledStats[roster[0].id].attack,8);
+  assert.equal(roll.settledStats[roster[0].id].attack,5);
+});
+
+test('an Orc with every neighboring cell occupied can evolve at its base attack',()=>{
+  const {roster:[orc],roll}=sampleSpin(['orc',...Array(10).fill('guard')],[],(_, [orc],__,result)=>{
+    const slot=result.drawn.findIndex(entry=>entry?.id===orc.id);
+    return neighborSlots(slot).every(index=>result.drawn[index]!==null);
+  });
+  assert.equal(roll.drawnStats[orc.id].attack,3);
+  assert.equal(orc.kind,'armoredOrc');
+  assert.equal(roll.settledStats[orc.id].attack,6);
 });
 
 test('spells resolve before links and evolution can trigger the same wizard again',()=>{
-  const {run,roster,spells,roll}=sampleSpin(['orc','wizard'],['surge'],(near,[orc,wizard],[surge])=>
-    near(surge,orc)&&near(wizard,orc));
+  const {run,roster,spells,roll}=sampleSpin(['orc','wizard',...Array(13).fill('guard')],['surge'],
+    (near,[orc,wizard],[surge])=>near(wizard,surge)&&near(wizard,orc)&&!near(surge,orc));
   assert.ok(roll.events[0].focus.includes(spells[0].id));
-  assert.equal(roster[0].gainedAttack,6);
+  assert.equal(roster[0].gainedAttack,4);
   assert.equal(roster[0].kind,'armoredOrc');
   assert.equal(run.spellCasts,1);
   assert.equal(run.spells.length,0);
@@ -443,33 +489,31 @@ test('armored orc needs two other neighboring Orcs and retains its permanent sta
   assert.equal(roster[0].gainedHealth,9);
 });
 
-test('an elite orc strengthens the whole faction after each evolution',()=>{
-  const {run,roster:[elite],roll}=sampleSpin(['eliteOrc','orc','orc'],[],(near,[elite,first,second])=>
-    !near(elite,first)||!near(elite,second),([,first,second])=>{
-    first.gainedAttack=3;
-    second.gainedAttack=3;
-  });
-  const evolving=roll.drawn.filter(slot=>slot?.kind==='orc');
-  assert.deepEqual(evolving.map(slot=>run.roster.find(unit=>unit.id===slot.id)?.kind),['armoredOrc','armoredOrc']);
-  assert.deepEqual(evolving.map(slot=>roll.settledStats[slot.id]),[{attack:12,health:27},{attack:12,health:27}]);
-  assert.deepEqual(unitStats(elite),{attack:7,health:19});
-  assert.equal(elite.evolutionTriggers,2);
-  assert.ok(roll.events.every(event=>event.focus.includes(elite.id)));
-  run.phase='result';
-  advance(run);
-  assert.match(unitEffectText('eliteOrc',elite),/^【激活·友方兽人进化时】.*永久获得 \+3\/\+3，并强化此效果/);
-  assert.match(unitEffectText('eliteOrc'),/永久获得 \+1\/\+1/);
+test('an elite doubles its own neighbors after each Orc evolution anywhere on the wheel',()=>{
+  const {roster:[,first,second,elite,guard,bear],roll}=sampleSpin(
+    ['warlock','orc','armoredOrc','eliteOrc','guard','werebear'],[],
+    (near,[caster,first,second,elite,guard,bear])=>
+      near(caster,first)&&near(caster,second)&&near(elite,guard)&&
+      !near(elite,first)&&!near(elite,second)&&!near(elite,bear),
+    ([,,,,guard])=>Object.assign(guard,{gainedAttack:1,gainedHealth:3,startingArmor:7}));
+  assert.deepEqual([first.kind,second.kind],['felSquire','felGuard']);
+  assert.deepEqual(unitStats(guard),{attack:12,health:60});
+  assert.equal(guard.startingArmor,7);
+  assert.deepEqual(unitStats(elite),{attack:4,health:16});
+  assert.deepEqual(unitStats(bear),{attack:3,health:18});
+  assert.ok(roll.events[0].focus.includes(elite.id));
+  assert.match(unitEffectText('eliteOrc'),/^【激活·友方兽人进化时】.*相邻.*翻倍/);
 });
 
-test('elite evolution also reaches earlier Orcs off the wheel at departure',()=>{
+test('Orcs outside the wheel keep their form at departure even with high attack',()=>{
   const run=newRun(41);
   const elite=recruit(run,'eliteOrc'),early=recruit(run,'orc',1),late=recruit(run,'orc',2);
   const human=recruit(run,'guard');
   assert.ok(startBattle(run));
-  assert.equal(early.kind,'armoredOrc');
-  assert.equal(late.kind,'armoredOrc');
-  assert.deepEqual([unitStats(early).attack,unitStats(late).attack],[10,11]);
-  assert.equal(elite.evolutionTriggers,2);
+  assert.equal(early.kind,'orc');
+  assert.equal(late.kind,'orc');
+  assert.deepEqual([unitStats(early).attack,unitStats(late).attack],[4,5]);
+  assert.equal(elite.gainedAttack,0);
   assert.equal(human.gainedAttack,0);
 });
 
@@ -511,9 +555,9 @@ test('slime removal grants permanent growth and preserves each remaining instanc
   assert.equal(applyMagicTag(run,slime.id,'remove').ok,false);
   assert.deepEqual(run.roster,[orc,guard]);
   assert.deepEqual([guard.gainedAttack,guard.gainedHealth],[6,6]);
-  assert.equal(orc.kind,'armoredOrc');
+  assert.equal(orc.kind,'orc');
   assert.equal(run.shop.board[5],null);
-  assert.equal(run.shop.board[6].kind,'armoredOrc');
+  assert.equal(run.shop.board[6].kind,'orc');
   assert.equal(guard.startingArmor,3);
 });
 
