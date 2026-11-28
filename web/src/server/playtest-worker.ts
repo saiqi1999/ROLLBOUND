@@ -1,5 +1,5 @@
 import {readBody} from './lineups.ts';
-import {matchMirrors,type MirrorManifest} from './match-mirrors.ts';
+import {matchMirrors} from './match-mirrors.ts';
 import {isCompletedPlaytestRun,readArchive,type PlaytestKV} from './playtest-archive.ts';
 
 export {isCompletedPlaytestRun} from './playtest-archive.ts';
@@ -66,13 +66,10 @@ export async function receivePlaytestRun(request:Request,env:Env):Promise<Respon
     if(reading){
       const ruleset=Number(url.searchParams.get('ruleset'));
       if(!Number.isSafeInteger(ruleset)||ruleset<1)return new Response(null,{status:400,headers});
-      const refresh=env.PLAYTEST_ARCHIVE?async(requestedAt:number)=>{
-        const result=await env.PLAYTEST_ARCHIVE.getByName('approved-mirrors').fetch(new Request('https://archive.internal/refresh',{
-          method:'POST',body:String(requestedAt),
-        }));
-        if(result.ok)return await result.json() as MirrorManifest;
-      }:undefined;
-      return Response.json(await matchMirrors(env.PLAYTEST_RUNS,ruleset,refresh),{headers});
+      const result=await env.PLAYTEST_ARCHIVE?.getByName('approved-mirrors')
+        .fetch(new Request('https://archive.internal/mirrors?ruleset='+ruleset)).catch(()=>undefined);
+      if(result?.ok)return new Response(result.body,{headers:{...headers,'content-type':'application/json'}});
+      return Response.json(await matchMirrors(env.PLAYTEST_RUNS,ruleset),{headers});
     }
     return await storePlaytestRun(request,env.PLAYTEST_ARCHIVE,headers);
   }catch{

@@ -4,7 +4,9 @@ import {
   digestOf,isCompletedPlaytestRun,legacyRunKey,legacyRunPrefix,listRunPages,playtestArchiveKey,readLegacyArchive,
   readRunValue,runKey,type PlaytestKV,
 } from './playtest-archive.ts';
-import {approvedMirrorsKey,mirrorRefreshKey,readApprovedMirrors,refreshMirrorPool,type MirrorManifest} from './match-mirrors.ts';
+import {
+  approvedMirrorsKey,matchMirrors,mirrorRefreshKey,readApprovedMirrors,readMirrorManifest,refreshMirrorPool,type MirrorManifest,
+} from './match-mirrors.ts';
 
 type ArchiveState={storage:{get<T>(key:string):Promise<T|undefined>;put(key:string,value:unknown):Promise<void>}};
 type LegacyArchiveProgress={revision:number;offset:number};
@@ -36,7 +38,8 @@ export class PlaytestArchive{
   }
 
   private async handle(request:Request){
-    switch(new URL(request.url).pathname){
+    const url=new URL(request.url);
+    switch(url.pathname){
       case '/append':{
         const run:unknown=await request.json();
         if(!isCompletedPlaytestRun(run))return new Response(null,{status:400});
@@ -48,17 +51,31 @@ export class PlaytestArchive{
         if(!batch?.entries.length)return new Response(null,{status:404});
         return Response.json(await this.approvePlaytests(batch));
       }
-      case '/refresh':{
-        const requestedAt=Number(await request.text());
-        if(!Number.isSafeInteger(requestedAt)||requestedAt<1)return new Response(null,{status:400});
-        const previous=await this.state.storage.get<MirrorManifest>('mirror-manifest');
-        if(previous&&previous.requestedAt>=requestedAt)return Response.json(previous);
-        const manifest=await refreshMirrorPool(this.kv,requestedAt);
-        await this.state.storage.put('mirror-manifest',manifest);
-        return Response.json(manifest);
+      case '/mirrors':{
+        const ruleset=Number(url.searchParams.get('ruleset'));
+        if(!Number.isSafeInteger(ruleset)||ruleset<1)return new Response(null,{status:400});
+        return Response.json(await this.findMirrors(ruleset));
       }
       default:return new Response(null,{status:404});
     }
+  }
+
+  private async findMirrors(ruleset:number){
+    const [published,refreshValue]=await Promise.all([
+      this.state.storage.get<MirrorManifest>('mirror-manifest'),this.kv.get(mirrorRefreshKey),
+    ]);
+    let manifest=published??await readMirrorManifest(this.kv);
+    const requestedAt=Number(refreshValue);
+    if(Number.isSafeInteger(requestedAt)&&requestedAt>(manifest?.requestedAt??0)){
+      try{
+        const updated=await refreshMirrorPool(this.kv,requestedAt);
+        await this.state.storage.put('mirror-manifest',updated);
+        manifest=updated;
+      }catch(error){
+        console.warn('Mirror pool refresh failed.',error);
+      }
+    }
+    return matchMirrors(this.kv,ruleset,manifest);
   }
 
   private async approvePlaytests(batch:ApprovalBatch){

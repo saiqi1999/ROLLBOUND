@@ -3,6 +3,7 @@ import test from 'node:test';
 import {encounters} from '../src/data.ts';
 import {advance,currentAttack,maxHealth,newRun,startBattle} from '../src/engine.ts';
 import {BATTLE_RULESET} from '../src/lineup-log.ts';
+import {needsMirrorLineups,saveMissingMirrorLineups} from '../src/mirror-lineups.ts';
 import {finishedPlaytestRun,recordPlaytestBattle} from '../src/playtest-run.ts';
 import {PlaytestArchive,receivePlaytestRun} from '../src/server/playtest-worker.ts';
 import {digestOf,legacyRunKey,playtestArchiveKey,playtestRunPrefix,runKey} from '../src/server/playtest-archive.ts';
@@ -238,8 +239,29 @@ test('manual approvals serve only the selected rounds and restore mirrored stats
   }
 });
 
+test('empty and partial saved mirror lookups leave missing rounds eligible for a retry',()=>{
+  const empty={ruleset:BATTLE_RULESET,rounds:{}};
+  const fourth={starters:[{id:'0-0',kind:'soldier',atk:11,hp:21,armor:0}],reserves:[]};
+  const seventh={starters:[{id:'0-0',kind:'orcRider',atk:51,hp:81,armor:0}],reserves:[]};
+  const fresh={stage:0};
+  assert.equal(saveMissingMirrorLineups(fresh,empty,1),false);
+  assert.equal(fresh.mirrors,undefined);
+
+  const resumed={stage:2,mirrors:structuredClone(empty)};
+  assert.equal(needsMirrorLineups(resumed),true);
+  assert.equal(saveMissingMirrorLineups(resumed,{...empty,rounds:{4:fourth}},3),true);
+  assert.equal(needsMirrorLineups(resumed),true);
+  assert.equal(saveMissingMirrorLineups(resumed,{...empty,rounds:{4:seventh,7:seventh}},4),true);
+  assert.deepEqual(resumed.mirrors.rounds,{4:fourth,7:seventh});
+  assert.equal(needsMirrorLineups(resumed),false);
+
+  const pastFourth={stage:4,mirrors:structuredClone(empty)};
+  saveMissingMirrorLineups(pastFourth,{...empty,rounds:{4:fourth,7:seventh}},5);
+  assert.deepEqual(pastFourth.mirrors.rounds,{7:seventh});
+});
+
 test('refresh numbers each round from one and a failed rebuild keeps the previous generation active',async t=>{
-  const {env,rows,reads,rejectPut}=storage();
+  const {env,rows,reads,rejectPut,restart}=storage();
   const base=finishedPlaytestRun(finishedRun());
   const earlier={...base,battles:[{...base.battles[1],round:4}]};
   const later=withRunId({...earlier,finishedAt:earlier.finishedAt+10},'b'.repeat(32));
@@ -258,11 +280,15 @@ test('refresh numbers each round from one and a failed rebuild keeps the previou
   assert.deepEqual(first.counts,{4:{4:2,7:1}});
   assert.equal(JSON.parse(rows.get(fourth+'1')).runId,earlier.runId);
   assert.equal(JSON.parse(rows.get(fourth+'2')).runId,later.runId);
+  rows.set(mirrorManifestKey,JSON.stringify({...first,counts:{}}));
+  restart();
   reads.length=0;
-  await match();
+  assert.deepEqual(Object.keys((await match()).rounds),['4','7']);
+  assert.equal(reads.includes(mirrorManifestKey),false);
   assert.equal(reads.includes(fourth+'2'),true);
   assert.equal(reads.includes(fourth+'1'),false);
   assert.equal(reads.some(key=>key.startsWith(playtestRunPrefix)),false);
+  rows.set(mirrorManifestKey,JSON.stringify(first));
 
   rows.set(approvedMirrorsKey,approved([earlier,4]));
   assert.deepEqual(Object.keys((await match()).rounds),['4','7']);

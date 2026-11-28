@@ -29,6 +29,23 @@ export function mirrorLineup(run:CurrentOpponent,stage=run.stage){
   return run.mirrors?.ruleset===BATTLE_RULESET&&isMirrorRound(round)?run.mirrors.rounds[round]:undefined;
 }
 
+export function needsMirrorLineups(run:CurrentOpponent){
+  return mirrorRounds.some(round=>round>run.stage&&!mirrorLineup(run,round-1));
+}
+
+export function saveMissingMirrorLineups(run:CurrentOpponent,bundle:MirrorBundle,firstUpcomingRound:number){
+  const mirrors:MirrorBundle=run.mirrors?.ruleset===bundle.ruleset?run.mirrors:{ruleset:bundle.ruleset,rounds:{}};
+  let changed=false;
+  for(const round of mirrorRounds){
+    const lineup=bundle.rounds[round];
+    if(round<firstUpcomingRound||!lineup||mirrors.rounds[round])continue;
+    mirrors.rounds[round]=lineup;
+    changed=true;
+  }
+  if(changed)run.mirrors=mirrors;
+  return changed;
+}
+
 export function opponentName(run:CurrentOpponent,stage=run.stage){
   return encounters[stage].name+(mirrorLineup(run,stage)?' · 影子对手':'');
 }

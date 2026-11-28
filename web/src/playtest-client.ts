@@ -47,7 +47,7 @@ export async function loadMirrors(){
     const url=new URL('mirrors',new URL(endpoint,window.location.href));
     url.searchParams.set('ruleset',String(BATTLE_RULESET));
     const response=await fetch(url,{
-      credentials:'omit',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(3000),
+      credentials:'omit',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(5000),
     });
     if(!response.ok)return;
     const bundle:unknown=await response.json();

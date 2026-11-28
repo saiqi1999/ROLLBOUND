@@ -145,13 +145,12 @@ async function matchDensePool(kv:PlaytestKV,ruleset:number,manifest:MirrorManife
   return {ruleset,rounds};
 }
 
-export async function matchMirrors(kv:PlaytestKV,ruleset:number,refresh?:(requestedAt:number)=>Promise<MirrorManifest|undefined>):Promise<MirrorBundle>{
-  const settings=await kv.get([mirrorManifestKey,mirrorRefreshKey]);
-  let manifest=JSON.parse(settings.get(mirrorManifestKey)??'null') as MirrorManifest|null;
-  const requestedAt=Number(settings.get(mirrorRefreshKey)??0);
-  if(refresh&&Number.isSafeInteger(requestedAt)&&requestedAt>(manifest?.requestedAt??0)){
-    manifest=await refresh(requestedAt).catch(()=>undefined)??manifest;
-  }
+export async function readMirrorManifest(kv:PlaytestKV){
+  return JSON.parse(await kv.get(mirrorManifestKey)??'null') as MirrorManifest|null;
+}
+
+export async function matchMirrors(kv:PlaytestKV,ruleset:number,manifest?:MirrorManifest|null):Promise<MirrorBundle>{
+  if(manifest===undefined)manifest=await readMirrorManifest(kv);
   if(manifest?.schemaVersion===1)return matchDensePool(kv,ruleset,manifest);
 
   const rounds:MirrorBundle['rounds']={};

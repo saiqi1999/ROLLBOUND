@@ -5,7 +5,7 @@ import {encounters,spells,unitEffectText,units,WEREWOLF_RECRUIT_GAIN,type Kind,t
 import {advance,commitBattleWindow,newRun,simulateBattleWindow,startBattle,type Run} from './engine.ts';
 import {FIELD_LIMIT,type Battle,type BattleWindow} from './battle/model.ts';
 import {magicTags,tagCount,type AppliedTag,type TagId} from './magic-tags.ts';
-import {isMirrorRound,mirrorRounds} from './mirror-lineups.ts';
+import {isMirrorRound,mirrorLineup,mirrorRounds,needsMirrorLineups,saveMissingMirrorLineups} from './mirror-lineups.ts';
 import {unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {applyMagicTag} from './shop/tags.ts';
@@ -59,6 +59,7 @@ if(playtestEnabled){
     try{
       const {runs,lineups}=await approvePlaytestBatch();
       approvalStatus.textContent=`已写入 ${runs} 局，共 ${lineups} 个认可阵容。`;
+      void prepareMirrors();
     }catch{
       approvalStatus.textContent='写入未确认，请稍后重试。';
       approve.disabled=false;
@@ -78,20 +79,31 @@ function save(){
   flushPlaytestRun();
 }
 
+function paintMirrorStatus(){
+  if(!playtestEnabled)return;
+  const status=document.querySelector('#playtest-mirror-status')!;
+  const ready=mirrorRounds.filter(round=>mirrorLineup(run,round-1));
+  status.textContent=mirrorLoads.has(run)?'正在获取线上影子对手…':
+    ready.length?'已获取线上影子对手 · 第 '+ready.join('、')+' 战':'暂未获取到线上影子对手。';
+}
+
 function prepareMirrors(){
   const current=run;
-  if(!playtestEnabled||current.phase!=='shop'||current.mirrors)return;
+  if(!playtestEnabled||current.phase!=='shop'||!needsMirrorLineups(current))return;
   const pending=mirrorLoads.get(current);
   if(pending)return pending;
   const download=loadMirrors().then(bundle=>{
-    if(!bundle||current!==run)return;
-    const nextRound=run.stage+(run.phase==='shop'?1:2);
-    for(const round of mirrorRounds)if(round<nextRound)delete bundle.rounds[round];
-    run.mirrors=bundle;
+    if(!bundle||current!==run||current.phase==='end')return;
+    const nextRound=current.stage+(current.phase==='shop'?1:2);
+    if(!saveMissingMirrorLineups(current,bundle,nextRound))return;
     saveRun(run);
     paintShopOpponent(app,run);
-  }).finally(()=>mirrorLoads.delete(current));
+  }).finally(()=>{
+    mirrorLoads.delete(current);
+    if(current===run)paintMirrorStatus();
+  });
   mirrorLoads.set(current,download);
+  paintMirrorStatus();
   return download;
 }
 
@@ -325,6 +337,7 @@ function render(){
   }else if(run.phase==='battle'){
     mountBattle();
   }else renderResult(app,run);
+  paintMirrorStatus();
 }
 
 function refreshTagPage(focus:string){
@@ -445,11 +458,12 @@ app.addEventListener('click',event=>{
     }
     case 'fight':{
       const current=run;
-      const download=isMirrorRound(run.stage+1)?prepareMirrors():undefined;
+      const stage=current.stage;
+      const download=isMirrorRound(stage+1)&&!mirrorLineup(current)?prepareMirrors():undefined;
       if(download){
         button.disabled=true;
         void download.then(()=>{
-          if(run===current&&run.phase==='shop'&&!spinController&&!tagsOpen){
+          if(run===current&&run.stage===stage&&run.phase==='shop'&&!spinController&&!tagsOpen){
             paintShopControls(app,run);
             launchBattle();
           }
