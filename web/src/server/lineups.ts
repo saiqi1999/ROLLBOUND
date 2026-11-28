@@ -1,7 +1,6 @@
-import {COMBAT,FIELD_LIMIT} from '../battle/model.ts';
-import {encounters,units} from '../data.ts';
-import type {LineupRecord,LineupUnit} from '../lineup-log.ts';
-import {magicTags} from '../magic-tags.ts';
+import {COMBAT} from '../battle/model.ts';
+import {encounters} from '../data.ts';
+import {isLineup,type LineupRecord} from '../lineup-log.ts';
 
 type Value=string|number|null;
 type Statement={
@@ -15,9 +14,7 @@ type StoredRow=Omit<LineupRecord,'lineup'>&{cursor:number;lineup:string};
 
 const limit=128*1024;
 const idPattern=/^[0-9a-f]{32}$/;
-const unitIdPattern=/^0-\d+(?:-clone)?$/;
 const outcomes=new Set(['win','loss','draw']);
-const fields=new Set(['id','kind','atk','hp','armor','tag','cloneOf']);
 
 const insert=`
   INSERT INTO battle_lineups (
@@ -39,15 +36,6 @@ const exportPage=`
 const integer=(value:unknown,min=0,max=Number.MAX_SAFE_INTEGER)=>typeof value==='number'&&
   Number.isSafeInteger(value)&&value>=min&&value<=max;
 
-function isUnit(value:unknown):value is LineupUnit{
-  if(!value||typeof value!=='object')return false;
-  const u=value as Partial<Omit<LineupUnit,'tag'>>&{tag?:unknown};
-  return Object.keys(u).every(key=>fields.has(key))&&typeof u.id==='string'&&unitIdPattern.test(u.id)&&
-    typeof u.kind==='string'&&Object.hasOwn(units,u.kind)&&integer(u.atk)&&integer(u.hp,1)&&integer(u.armor)&&
-    (u.tag===undefined||(typeof u.tag==='string'&&u.tag!=='remove'&&Object.hasOwn(magicTags,u.tag)))&&
-    (u.cloneOf===undefined||(typeof u.cloneOf==='string'&&u.id===u.cloneOf+'-clone'&&u.tag===undefined));
-}
-
 export function isLineupRecord(value:unknown):value is LineupRecord{
   if(!value||typeof value!=='object')return false;
   const row=value as Partial<LineupRecord>;
@@ -55,11 +43,7 @@ export function isLineupRecord(value:unknown):value is LineupRecord{
     !integer(row.round,1,encounters.length)||!integer(row.seed,0,0xffffffff)||!integer(row.ruleset,1)||
     !integer(row.startedAt,1)||!integer(row.fireballs)||
     (row.result===null?row.ticks!==null:!outcomes.has(row.result??'')||!integer(row.ticks,0,COMBAT.maxTicks)))return false;
-  const {starters,reserves}=row.lineup??{};
-  if(!Array.isArray(starters)||!starters.length||starters.length>2*FIELD_LIMIT||!Array.isArray(reserves)||
-    !starters.every(isUnit)||!reserves.every(isUnit))return false;
-  const roster=[...starters,...reserves];
-  return new Set(roster.map(unit=>unit.id)).size===roster.length;
+  return isLineup(row.lineup);
 }
 
 export async function readBody(request:Request,maxBytes=limit){

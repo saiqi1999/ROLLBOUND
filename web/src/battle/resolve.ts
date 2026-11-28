@@ -37,7 +37,16 @@ export function createBattle(plan:BattlePlan):Battle{
     if(tag)unit.tag=tag;
     return unit;
   });
-  const enemies=plan.enemies.map(({kind,attack,health},index)=>makeUnit('1-'+index,kind,1,attack,health));
+  const opposition=plan.enemies;
+  const mirror=Array.isArray(opposition)?undefined:opposition;
+  const enemies=Array.isArray(opposition)?
+    opposition.map(({kind,attack,health},index)=>makeUnit('1-'+index,kind,1,attack,health)):
+    [...opposition.starters,...opposition.reserves].map(({kind,atk,hp,armor,tag},index)=>{
+      const unit=makeUnit('1-'+index,kind,1,atk-units[kind].atk,hp-units[kind].hp);
+      unit.shield=armor;
+      if(tag)unit.tag=tag;
+      return unit;
+    });
   const battle:Battle={
     id:plan.id,ruleset:BATTLE_RULESET,units:[...allies,...enemies],reserves:[[],[]],recruitedDeaths:[0,0],
     openingResolved:false,openingSpells:structuredClone(plan.openingSpells),runtime:createCombat(plan.seed),
@@ -45,9 +54,11 @@ export function createBattle(plan:BattlePlan):Battle{
   const groups=[allies,enemies];
   for(const side of [0,1] as const){
     const random={rng:(plan.seed^Math.imul(side+1,0x2ba9d777))>>>0};
-    const order=shuffle(groups[side].slice(),random);
-    for(const unit of order.slice(0,FIELD_LIMIT))deployUnit(battle,unit);
-    battle.reserves[side]=order.slice(FIELD_LIMIT).map(unit=>unit.id);
+    const snapshot=side===1?mirror:undefined;
+    const order=snapshot?groups[side]:shuffle(groups[side].slice(),random);
+    const starters=snapshot?snapshot.starters.length:FIELD_LIMIT;
+    for(const unit of order.slice(0,starters))deployUnit(battle,unit);
+    battle.reserves[side]=order.slice(starters).map(unit=>unit.id);
   }
   deployClones(battle,battle.units.filter(deployed));
   return battle;

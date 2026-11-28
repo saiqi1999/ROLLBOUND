@@ -1,6 +1,7 @@
 import {encounters,unitOffer,units} from './data.ts';
 import type {Run} from './engine.ts';
 import {magicTags} from './magic-tags.ts';
+import {isMirrorBundle} from './mirror-lineups.ts';
 import {WHEEL_SIZE} from './shop/wheel.ts';
 
 const key='rollbound.shop-wheel.v6';
@@ -18,6 +19,7 @@ export function loadRun():Run|undefined{
       for(const offer of saved.shop.offers){
         if(offer.type==='unit'&&!offer.sold)offer.price=unitOffer(offer.kinds[0]).price;
       }
+      if(saved.mirrors&&!isMirrorBundle(saved.mirrors))delete saved.mirrors;
       return saved;
     }
   }catch{

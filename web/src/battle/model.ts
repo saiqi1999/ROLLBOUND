@@ -1,4 +1,5 @@
 import type {Kind} from '../data.ts';
+import type {Lineup} from '../lineup-log.ts';
 import type {AppliedTag,TagId} from '../magic-tags.ts';
 import type {OpeningSpell,UnitInstance} from '../shop/model.ts';
 
@@ -30,7 +31,7 @@ export type BattlePlan = {
   id:string;
   seed:number;
   allies:UnitInstance[];
-  enemies:{kind:Kind;attack:number;health:number}[];
+  enemies:{kind:Kind;attack:number;health:number}[]|Lineup;
   openingSpells:OpeningSpell[];
 };
 export type Battle = {

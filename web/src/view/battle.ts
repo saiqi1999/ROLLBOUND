@@ -1,5 +1,6 @@
 import {encounters,REQUIRED_WINS} from '../data.ts';
 import {earnedRemovalMarker,type Run} from '../engine.ts';
+import {opponentName} from '../mirror-lineups.ts';
 import {magicTags,tagCount,type TagId} from '../magic-tags.ts';
 import {deployed} from '../battle/unit-state.ts';
 import type {Battle} from '../battle/model.ts';
@@ -14,7 +15,7 @@ function seconds(battle:Battle){
 
 export function renderBattle(root:HTMLElement,run:Run,replay:boolean){
   root.innerHTML=header(run)+'<section class="battle"><div class="battle-title"><div><small class="kicker">第 '+(run.stage+1)+
-    ' 战 / '+encounters.length+'</small><h1>'+encounters[run.stage].name+'</h1></div><span class="round" id="battle-time"></span></div>'+
+    ' 战 / '+encounters.length+'</small><h1>'+opponentName(run)+'</h1></div><span class="round" id="battle-time"></span></div>'+
     '<div class="commanders"><span id="team0"></span><b>VS</b><span id="team1"></span></div>'+
     '<div class="theatre"><div class="arena-wrap"><canvas id="scenery" aria-hidden="true"></canvas>'+
     '<div id="arena" aria-label="自动战斗场面"></div>'+
@@ -56,8 +57,8 @@ export function renderResult(root:HTMLElement,run:Run){
   const reward=rewards.size?'<p class="tag-reward">获得 '+[...rewards].map(([tag,count])=>
     magicTags[tag].name+'标签 ×'+count+'（持有 '+tagCount(run.tagInventory,tag)+'）').join(' · ')+'</p>':'';
   const roster=[...new Set(run.roster.map(unit=>unit.kind))].map(kind=>art(kind)).join('');
-  const score=run.results.map((value,index)=>'<div><small>'+encounters[index].name+'</small><b>'+value+'</b></div>').join('');
-  root.innerHTML=header(run)+'<section class="results"><div class="kicker">第 '+(lastStage+1)+' 战 · '+encounters[lastStage].name+
+  const score=run.results.map((value,index)=>'<div><small>'+opponentName(run,index)+'</small><b>'+value+'</b></div>').join('');
+  root.innerHTML=header(run)+'<section class="results"><div class="kicker">第 '+(lastStage+1)+' 战 · '+opponentName(run,lastStage)+
     '</div><h1>'+title+'</h1><p>'+summary+'</p><div class="results-team">'+roster+'</div><div class="score">'+score+'</div>'+
     reward+review+lineupExport+'<button class="primary" data-act="'+(end?'reset':'advance')+'">'+
     (end?'再来一局':nextShop?'进入下一间商店 · +'+encounters[run.stage+1].gold+' 金币':'查看本局总结')+'</button></section>';

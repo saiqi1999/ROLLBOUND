@@ -44,6 +44,13 @@ jobs:
             --header 'Content-Type: application/json' --data '{}' "$VITE_PLAYTEST_RUNS_URL")
           printf 'Lineup collector validation HTTP %s\n' "$validation_status"
           test "$validation_status" = 400
+      - name: Verify mirror lookup
+        continue-on-error: true
+        run: |
+          mirror_url=$(node -p 'new URL("mirrors?ruleset=4", process.env.VITE_PLAYTEST_RUNS_URL).href')
+          curl --proto '=https' --fail --silent --show-error --max-time 12 \
+            --header 'Origin: https://saiqi1999.github.io' "$mirror_url" |
+            node -e 'const {ruleset, rounds} = JSON.parse(require("node:fs").readFileSync(0, "utf8")); if (ruleset !== 4 || !rounds || Array.isArray(rounds)) process.exit(1); console.log("Mirror lookup HTTP 200, rounds:", Object.keys(rounds).join(", ") || "empty");'
       - run: npm run build
       - uses: actions/upload-artifact@v4
         with:

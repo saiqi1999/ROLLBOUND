@@ -5,16 +5,17 @@ import {encounters,spells,unitEffectText,units,WEREWOLF_RECRUIT_GAIN,type Kind,t
 import {advance,commitBattleWindow,newRun,simulateBattleWindow,startBattle,type Run} from './engine.ts';
 import {FIELD_LIMIT,type Battle,type BattleWindow} from './battle/model.ts';
 import {magicTags,tagCount,type AppliedTag,type TagId} from './magic-tags.ts';
+import {isMirrorRound,mirrorRounds} from './mirror-lineups.ts';
 import {unitStats,wheelFrame} from './shop/model.ts';
 import {buy,refreshShop,resolveSpin,spinCost} from './shop/rules.ts';
 import {applyMagicTag} from './shop/tags.ts';
 import {loadRun,saveRun} from './save.ts';
 import {flushLineupLogs,lineupLogging,queueLineup,startLineupLog} from './lineup-client.ts';
-import {playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
+import {loadMirrors,playtestEnabled,uploadFinishedPlaytest} from './playtest-client.ts';
 import {recordPlaytestBattle} from './playtest-run.ts';
 import {art,spellArt,unitTags} from './view/common.ts';
 import {playShopSpin} from './view/reels.ts';
-import {paintShopBoard,paintShopControls,paintSpinSummary,renderShop} from './view/shop.ts';
+import {paintShopBoard,paintShopControls,paintShopOpponent,paintSpinSummary,renderShop} from './view/shop.ts';
 import {renderTags,slimeRemovalBenefit,tagDetails,type TagSelection} from './view/tags.ts';
 import {paintBattle,renderBattle,renderResult} from './view/battle.ts';
 import type * as Arena from './arena.ts';
@@ -30,6 +31,7 @@ let arena:typeof Arena|undefined,arenaReady=false,arenaToken=0,arenaWait=0;
 let timer=0,startedAt=0,remaining=0,paused=false,speed=1;
 let frames:PlaybackFrame[]=[],frameIndex=0,pending:BattleWindow|undefined,playbackStart:Battle|undefined;
 let replayIndex:number|undefined,resumeAfterDialog=false;
+const mirrorLoads=new WeakMap<Run,Promise<void>>();
 
 function flushPlaytestRun(){
   void uploadFinishedPlaytest(run,uploaded=>{if(run===uploaded)saveRun(uploaded);});
@@ -41,6 +43,32 @@ function save(){
   document.querySelector('#save-status')!.textContent=stored?'':'浏览器未能保存，本局进度仅在当前标签页有效。';
   if(run.battle&&(run.history.length===0||run.results[run.stage]))queueLineup(run);
   flushPlaytestRun();
+}
+
+function prepareMirrors(){
+  const current=run;
+  if(!playtestEnabled||current.phase!=='shop'||current.mirrors)return;
+  const pending=mirrorLoads.get(current);
+  if(pending)return pending;
+  const download=loadMirrors().then(bundle=>{
+    if(!bundle||current!==run)return;
+    const nextRound=run.stage+(run.phase==='shop'?1:2);
+    for(const round of mirrorRounds)if(round<nextRound)delete bundle.rounds[round];
+    run.mirrors=bundle;
+    saveRun(run);
+    paintShopOpponent(app,run);
+  }).finally(()=>mirrorLoads.delete(current));
+  mirrorLoads.set(current,download);
+  return download;
+}
+
+function launchBattle(){
+  if(startBattle(run)){
+    startLineupLog(run,lineupLogging||playtestEnabled);
+    paused=false;
+    save();
+    render();
+  }
 }
 
 function modal(title:string,html:string){
@@ -382,20 +410,28 @@ app.addEventListener('click',event=>{
       refreshTagPage(result.removed?'.tag-unit, .tags-heading button':'.tag-unit[aria-pressed="true"]');
       break;
     }
-    case 'fight':
-      if(startBattle(run)){
-        startLineupLog(run,lineupLogging||playtestEnabled);
-        paused=false;
-        save();
-        render();
+    case 'fight':{
+      const current=run;
+      const download=isMirrorRound(run.stage+1)?prepareMirrors():undefined;
+      if(download){
+        button.disabled=true;
+        void download.then(()=>{
+          if(run===current&&run.phase==='shop'&&!spinController&&!tagsOpen){
+            paintShopControls(app,run);
+            launchBattle();
+          }
+        });
+      }else{
+        launchBattle();
       }
       break;
+    }
     case 'pause':togglePause();break;
     case 'step':paused=true;stopTimer();tick();break;
     case 'speed':stopTimer();speed=speed===1?2:speed===2?4:1;paintControls();schedule();break;
     case 'skip':fastFinish();break;
-    case 'advance':advance(run);save();render();break;
-    case 'reset':run=newRun(getSeed());save();render();break;
+    case 'advance':advance(run);save();render();void prepareMirrors();break;
+    case 'reset':run=newRun(getSeed());save();render();void prepareMirrors();break;
     case 'log':{
       const current=pending&&replayIndex===undefined?
         pending.events.slice(0,currentFrame()?.until??0).filter(entry=>entry.phase!=='移动').map(entry=>
@@ -429,8 +465,10 @@ document.addEventListener('visibilitychange',()=>{
 window.addEventListener('online',()=>{
   void flushLineupLogs();
   flushPlaytestRun();
+  void prepareMirrors();
 });
 render();
+void prepareMirrors();
 if(run.phase==='shop')void import('./arena.ts').catch(()=>{/* Battle startup can still use its fallback. */});
 if(!loaded)save();
 else{

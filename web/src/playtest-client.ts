@@ -1,10 +1,28 @@
 import type {Run} from './engine.ts';
+import {BATTLE_RULESET} from './battle/model.ts';
 import {lineupLogging} from './lineup-client.ts';
+import {isMirrorBundle} from './mirror-lineups.ts';
 import {finishedPlaytestRun} from './playtest-run.ts';
 
 const endpoint=import.meta.env.VITE_PLAYTEST_RUNS_URL?.trim();
 export const playtestEnabled=Boolean(endpoint)&&!lineupLogging;
 const sending=new WeakSet<Run>();
+
+export async function loadMirrors(){
+  if(!playtestEnabled||!endpoint)return;
+  try{
+    const url=new URL('mirrors',new URL(endpoint,window.location.href));
+    url.searchParams.set('ruleset',String(BATTLE_RULESET));
+    const response=await fetch(url,{
+      credentials:'omit',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(3000),
+    });
+    if(!response.ok)return;
+    const bundle:unknown=await response.json();
+    if(isMirrorBundle(bundle))return bundle;
+  }catch{
+    // A run can continue with its built-in encounters while the mirror service is unavailable.
+  }
+}
 
 async function sendRun(endpoint:string,body:string,keepalive:boolean){
   const controller=new AbortController();

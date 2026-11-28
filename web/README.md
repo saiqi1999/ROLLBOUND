@@ -34,9 +34,9 @@ npm run dev
 
 ## GitHub Pages 试玩采集
 
-配置上传地址后，完成一局远征时，网页版会把该局已收集的开场阵容、轮次、规则版本、随机种子、战果和步数合成一个 JSON。Worker 把它写到 Workers KV 的 `run:<runId>`，相同记录重试使用同一个键。当前远征的待提交阵容随游戏存档一起恢复，提交成功后从该存档移除明细。已结束的旧局没有可补录的阵容。单局报告使用 `schemaVersion: 1`，每场战斗沿用 `LineupRecord`。
+配置上传地址后，完成一局远征时，网页版会把该局已收集的开场阵容、轮次、规则版本、随机种子、战果和步数合成一个 JSON。Worker 按 `runId` 合并到 Workers KV 的 `playtest:all`，相同记录重试只保存一份。包内的 `runs` 按 `runId` 索引，首次建包时导入已有的 `run:<runId>` 历史记录。Durable Object 串行写入全量包，避免并发上传互相覆盖。当前远征的待提交阵容随游戏存档一起恢复，提交成功后从该存档移除明细。单局报告使用 `schemaVersion: 1`，每场战斗沿用 `LineupRecord`。
 
-Cloudflare Workers Builds 使用仓库根目录的 `wrangler.jsonc`。连接 `main` 时，Worker 名填 `rollbound`，根目录留空或填 `/`，Build command 留空，Deploy command 填 `npx --yes wrangler@4 deploy`。部署会自动绑定 `PLAYTEST_RUNS`。
+Cloudflare Workers Builds 使用仓库根目录的 `wrangler.jsonc`。连接 `main` 时，Worker 名填 `rollbound`，根目录留空或填 `/`，Build command 留空，Deploy command 填 `npx --yes wrangler@4 deploy`。部署会绑定 `PLAYTEST_RUNS` 和串行写入使用的 `PLAYTEST_ARCHIVE`。
 
 也可以登录 Cloudflare 后，从仓库根目录运行以下命令。
 
@@ -52,3 +52,18 @@ GitHub Pages 默认使用 `https://rollbound.cardinal-99.workers.dev/api/lineup-
 ```sh
 node web/scripts/export-playtest-runs.mjs > rollbound-playtest-runs.ndjson
 ```
+
+## 影子对战
+
+第 4、7 战在 `mirror:approved` 里匹配同规则版本的阵容。有同时包含两轮的候选时，两战使用同一局的快照。网页开局下载镜像阵容并随本局存档保存，后续开战直接使用已经下载的首发、候补、攻血、护甲和标签。玩家开始一局时没有可用镜像，则对应战斗使用原关卡阵容。
+
+在 `rollbound-playtest-runs` 的 KV Pairs 手动创建或编辑 `mirror:approved`。`runId` 填全量包里选定的局 ID，`ruleset` 和 `rounds` 取自该局允许匹配的战斗。以下格式示例里的 `runId` 需要替换为已选记录。
+
+```json
+{
+  "schemaVersion": 1,
+  "opponents": [{ "runId": "替换成选定的 runId", "ruleset": 4, "rounds": [4, 7] }]
+}
+```
+
+空名单用 `{"schemaVersion":1,"opponents":[]}`。优秀包由人工编辑，全量包在新局结算时更新。全量包达到 Workers KV 单值上限时，上传会返回 `507`。

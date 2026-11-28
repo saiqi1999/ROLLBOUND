@@ -12,6 +12,12 @@
       "binding": "PLAYTEST_RUNS"
     }
   ],
+  "durable_objects": {
+    "bindings": [{ "name": "PLAYTEST_ARCHIVE", "class_name": "PlaytestArchive" }]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PlaytestArchive"] }
+  ],
   "ratelimits": [
     {
       "name": "PLAYTEST_LIMITER",

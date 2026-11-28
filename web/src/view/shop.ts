@@ -1,6 +1,7 @@
 import {encounters,REFRESH_COST,spells,unitEffectText,units,type Kind} from '../data.ts';
 import {canStartBattle,type Run} from '../engine.ts';
 import {magicTags,tagCount,tagIds,type AppliedTag} from '../magic-tags.ts';
+import {mirrorLineup,opponentName} from '../mirror-lineups.ts';
 import {unitStats,wheelFrame,type UnitInstance} from '../shop/model.ts';
 import {canSpin,spinCost} from '../shop/rules.ts';
 import {art,coin,header,heart,lineupExport,spellArt,tagArt,tagBadge,unitTags} from './common.ts';
@@ -29,8 +30,12 @@ function alliedRoster(run:Run){
   }).join('');
 }
 
-function enemyRoster(stage:number){
-  const encounter=encounters[stage];
+function enemyRoster(run:Run){
+  const mirror=mirrorLineup(run);
+  if(mirror)return [...mirror.starters,...mirror.reserves].map(unit=>
+    rosterButton(unit.kind,unit.atk,unit.hp,1,undefined,unit.armor,unit.tag),
+  ).join('');
+  const encounter=encounters[run.stage];
   const counts=new Map<Kind,number>();
   for(const kind of encounter.units)counts.set(kind,(counts.get(kind)??0)+1);
   return [...counts].map(([kind,count])=>rosterButton(
@@ -129,8 +134,15 @@ export function paintShopBoard(root:HTMLElement,run:Run){
   renderReels(root.querySelector('#reels')!,wheelFrame(run.shop.board,run.roster));
 }
 
+export function paintShopOpponent(root:HTMLElement,run:Run){
+  const title=root.querySelector('#shop-enemy-name'),roster=root.querySelector('#shop-enemy');
+  if(title&&roster){
+    title.textContent=opponentName(run);
+    roster.innerHTML=enemyRoster(run);
+  }
+}
+
 export function renderShop(root:HTMLElement,run:Run){
-  const encounter=encounters[run.stage];
   const offers=run.shop.offers.map((offer,index)=>{
     const unit=offer.type==='unit'?offer.kinds[0]:undefined;
     const artButton=offer.type==='spell'?'data-spell="'+offer.spell+'"':
@@ -164,10 +176,11 @@ export function renderShop(root:HTMLElement,run:Run){
     '<section class="tag-shelf" aria-labelledby="tag-shelf-title"><h2 id="tag-shelf-title">标签架</h2>'+
     '<div id="held-tags" class="held-tags"></div></section></div>'+
     '<div class="shop-details"><details><summary>我的阵容 <small id="roster-count"></small></summary>'+
-    '<div id="shop-roster"></div></details><details><summary>下战对手 <small>'+encounter.name+
-    '</small></summary><div class="roster enemy">'+enemyRoster(run.stage)+'</div></details>'+
+    '<div id="shop-roster"></div></details><details><summary>下战对手 <small id="shop-enemy-name"></small>'+
+    '</summary><div class="roster enemy" id="shop-enemy"></div></details>'+
     '<details id="spin-summary" hidden><summary>停盘记录</summary><ol></ol></details></div></section>';
   paintShopBoard(root,run);
+  paintShopOpponent(root,run);
   paintShopControls(root,run);
   paintSpinSummary(root,run);
 }
